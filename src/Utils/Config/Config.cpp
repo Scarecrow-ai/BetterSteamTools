@@ -14,6 +14,7 @@ namespace {
         std::string manifestProvider = "opensteamtool";
         ManifestTimeouts manifestTimeouts;
         bool manifestPinsOnTestBranch = false;
+        bool manifestAnswerBetaFallback = false;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
         std::vector<std::string> luaPaths;
@@ -53,6 +54,7 @@ namespace {
         manifestTimeoutSend    = snapshot.manifestTimeouts.send;
         manifestTimeoutRecv    = snapshot.manifestTimeouts.recv;
         manifestPinsOnTestBranch = snapshot.manifestPinsOnTestBranch;
+        manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
         logLevel               = snapshot.logLevel;
         logDir                 = snapshot.logDir;
         luaPaths               = snapshot.luaPaths;
@@ -118,6 +120,8 @@ namespace {
                     snapshot.manifestTimeouts.recv = static_cast<uint32_t>(*val);
                 if (auto val = (*manifest)["pins_on_test_branch"].value<bool>())
                     snapshot.manifestPinsOnTestBranch = *val;
+                if (auto val = (*manifest)["answer_beta_fallback"].value<bool>())
+                    snapshot.manifestAnswerBetaFallback = *val;
             }
 
             // [license]

@@ -73,6 +73,13 @@ namespace Config {
     // to public and drop the appmanifest betakey.
     inline bool manifestPinsOnTestBranch = false;
 
+    // Answer a reported beta fallback by moving the depot config onto the
+    // branch's own build (read from appinfo). Default off: keeping the betakey is
+    // the fix, and forcing the depot config can leave Steam wanting to apply an
+    // update that it never starts (measured: target build moved to the branch,
+    // build id stayed on public, "update required" with 0 bytes).
+    inline bool manifestAnswerBetaFallback = false;
+
     // [license] refresh_on_startup — re-assert the injected package on the first
     // ownership query of every launch (MarkLicenseAsChanged + ProcessPending
     // LicenseUpdates). Required for Lua changes to show up without a restart,

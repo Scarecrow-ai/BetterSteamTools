@@ -68,6 +68,11 @@ timeout_recv_ms    = 10000
 # pins are left out while a non-default branch is selected, so the branch can
 # resolve. Set true if your pins are the beta branch's own gids.
 pins_on_test_branch = false
+# Answer a beta fallback by pointing the depot config at the branch's own build
+# (from the client's appinfo cache). Off by default: keeping the betakey is what
+# fixes a lost test branch; forcing the depot config can leave Steam wanting an
+# update it never starts.
+answer_beta_fallback = false
 
 [license]
 # Re-assert the injected package on the first ownership query of every launch

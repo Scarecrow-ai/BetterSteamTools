@@ -179,7 +179,14 @@ namespace {
                 return applied;
             };
 
-            if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
+            if (*pbBetaFallback && !Config::manifestAnswerBetaFallback) {
+                // Default: keep the record only. Forcing the depot config onto the
+                // branch build is available behind [manifest] answer_beta_fallback
+                // for testing, but it can leave Steam on "update required" with
+                // nothing to download, so it is not the default.
+                LOG_MANIFEST_DEBUG("BuildDepotDependency: app {} fallback left to Steam "
+                                   "(answer_beta_fallback is off)", AppId);
+            } else if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
                 uint32_t applied = applyDepots(BetaKeeper::BranchDepots(AppId, *branch), "appinfo");
                 if (!applied) applied = applyDepots(BetaKeeper::InstalledDepots(AppId), "installed build");
                 if (applied) {
