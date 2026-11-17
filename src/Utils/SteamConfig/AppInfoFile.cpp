@@ -13,9 +13,10 @@
 namespace {
 
     using BranchDepot = AppInfoFile::BranchDepot;
+    using BranchInfo  = AppInfoFile::BranchInfo;
 
     struct AppEntry {
-        std::unordered_map<std::string, std::vector<BranchDepot>> branches;
+        std::unordered_map<std::string, BranchInfo> branches;
     };
 
     struct State {
@@ -222,6 +223,23 @@ namespace {
             }
         }
 
+        // appinfo/depots/branches/<branch>/buildid — the build id the branch points at.
+        constexpr std::string_view kBranchPrefix = "appinfo/depots/branches/";
+        for (const auto& [key, value] : leaves) {
+            if (key.size() <= kBranchPrefix.size() ||
+                key.compare(0, kBranchPrefix.size(), kBranchPrefix) != 0) {
+                continue;
+            }
+            const std::string_view rest(key.data() + kBranchPrefix.size(),
+                                        key.size() - kBranchPrefix.size());
+            const size_t slash = rest.find('/');
+            if (slash == std::string_view::npos) continue;
+            if (rest.substr(slash + 1) != "buildid") continue;
+            uint64_t buildId = 0;
+            if (!ParseU64(value, buildId)) continue;
+            out.branches[std::string(rest.substr(0, slash))].buildId = buildId;
+        }
+
         for (const auto& [slotKey, slot] : slots) {
             if (!slot.hasGid || slot.gid == 0) continue;
             const size_t bar = slotKey.find('|');
@@ -231,7 +249,7 @@ namespace {
             depot.depotId = slot.depotId;
             depot.gid = slot.gid;
             depot.size = slot.size;
-            out.branches[branch].push_back(depot);
+            out.branches[branch].depots.push_back(depot);
         }
         if (out.branches.empty()) return false;
 
@@ -340,9 +358,9 @@ namespace AppInfoFile {
 
             ++stats.apps;
             stats.branches += static_cast<uint32_t>(entry.branches.size());
-            for (const auto& [branch, depots] : entry.branches) {
+            for (const auto& [branch, info] : entry.branches) {
                 (void)branch;
-                stats.manifests += static_cast<uint32_t>(depots.size());
+                stats.manifests += static_cast<uint32_t>(info.depots.size());
             }
             apps.emplace(appId, std::move(entry));
         }
@@ -369,7 +387,16 @@ namespace AppInfoFile {
         if (app == Store().apps.end()) return {};
         const auto entry = app->second.branches.find(std::string(branch));
         if (entry == app->second.branches.end()) return {};
-        return entry->second;
+        return entry->second.depots;
+    }
+
+    uint64_t LookupBuildId(uint32_t appId, std::string_view branch) {
+        std::lock_guard<std::mutex> lock(Store().mutex);
+        const auto app = Store().apps.find(appId);
+        if (app == Store().apps.end()) return 0;
+        const auto entry = app->second.branches.find(std::string(branch));
+        if (entry == app->second.branches.end()) return 0;
+        return entry->second.buildId;
     }
 
     Stats GetStats() {

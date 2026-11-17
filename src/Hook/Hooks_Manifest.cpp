@@ -183,10 +183,24 @@ namespace {
                 uint32_t applied = applyDepots(BetaKeeper::BranchDepots(AppId, *branch), "appinfo");
                 if (!applied) applied = applyDepots(BetaKeeper::InstalledDepots(AppId), "installed build");
                 if (applied) {
+                    // The depot config now describes the branch's build, so the
+                    // build id reported for it has to be that build as well:
+                    // leaving the public build id here is what leaves Steam stuck
+                    // on "update required" with nothing to download.
+                    const uint64_t branchBuildId = BetaKeeper::BranchBuildId(AppId, *branch);
+                    if (branchBuildId && pBuildId) {
+                        if (*pBuildId != static_cast<uint32>(branchBuildId)) {
+                            LOG_MANIFEST_INFO("BuildDepotDependency: app {} build {} -> {} "
+                                              "(branch \"{}\")", AppId, *pBuildId,
+                                              static_cast<uint32>(branchBuildId), *branch);
+                        }
+                        *pBuildId = static_cast<uint32>(branchBuildId);
+                    }
                     *pbBetaFallback = false;   // the branch is satisfiable; do not waive it
                     LOG_MANIFEST_WARN("BuildDepotDependency: app {} kept branch \"{}\" — {} depot(s) "
-                                      "pointed at that branch's build instead of falling back",
-                                      AppId, *branch, applied);
+                                      "pointed at that branch's build (build {})",
+                                      AppId, *branch, applied,
+                                      pBuildId ? *pBuildId : 0);
                 } else {
                     LOG_MANIFEST_DEBUG("BuildDepotDependency: app {} branch \"{}\" has no depot list "
                                        "in appinfo or in the manifest", AppId, *branch);

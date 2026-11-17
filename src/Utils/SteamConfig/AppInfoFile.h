@@ -31,12 +31,23 @@ namespace AppInfoFile {
         uint64_t size    = 0;
     };
 
+    struct BranchInfo {
+        uint64_t buildId = 0;                     // branches/<branch>/buildid
+        std::vector<BranchDepot> depots;          // depots/<depot>/manifests/<branch>
+    };
+
     // Re-reads the cache when the file changed. Cheap to call often; the parse is
     // skipped unless (size, mtime) differ from the last successful read.
     bool Refresh(const std::string& steamRoot);
 
     // Branch depot list for one app, or empty when the cache has no such entry.
     std::vector<BranchDepot> Lookup(uint32_t appId, std::string_view branch);
+
+    // Build id that branch currently points at (0 when unknown). This is the value
+    // BuildDepotDependency reports through pBuildId; leaving it on the public
+    // build while the depot config says otherwise is what pins an app to
+    // "update required".
+    uint64_t LookupBuildId(uint32_t appId, std::string_view branch);
 
     struct Stats {
         bool     loaded     = false;

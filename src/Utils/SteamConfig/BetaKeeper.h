@@ -68,6 +68,11 @@ namespace BetaKeeper {
     // recalled from when the branch really was installed.
     std::vector<InstalledDepot> BranchDepots(AppId_t appId, std::string_view branch);
 
+    // Build id that branch points at, from the client's appinfo cache (0 when
+    // unknown). BuildDepotDependency reports this through pBuildId, so a depot
+    // config that was moved onto the branch has to move this value with it.
+    uint64_t BranchBuildId(AppId_t appId, std::string_view branch);
+
     // Record one branch manifest entry taken from the client's own appinfo
     // ("depots/<depot>/manifests/<branch>/{gid,size}"). This is the authoritative
     // branch -> build mapping: it is what Steam itself was served, so it cannot

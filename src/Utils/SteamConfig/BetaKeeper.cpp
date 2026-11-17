@@ -630,6 +630,11 @@ namespace BetaKeeper {
         return out;
     }
 
+    uint64_t BranchBuildId(AppId_t appId, std::string_view branch) {
+        if (appId == k_uAppIdInvalid || branch.empty()) return 0;
+        return AppInfoFile::LookupBuildId(appId, branch);
+    }
+
     void NoteBranchManifest(AppId_t appId, std::string_view branch, AppId_t depotId,
                             uint64_t gid, uint64_t size) {
         if (appId == k_uAppIdInvalid || depotId == 0 || gid == 0 || branch.empty()) return;
