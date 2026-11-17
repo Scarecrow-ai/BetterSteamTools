@@ -14,7 +14,7 @@ namespace {
         std::string manifestProvider = "opensteamtool";
         ManifestTimeouts manifestTimeouts;
         bool manifestPinsOnTestBranch = false;
-        bool manifestAnswerBetaFallback = false;
+        bool manifestAnswerBetaFallback = true;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
         std::vector<std::string> luaPaths;
