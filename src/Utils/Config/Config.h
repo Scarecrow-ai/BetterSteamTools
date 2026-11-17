@@ -65,9 +65,25 @@ namespace Config {
     inline uint32_t manifestTimeoutSend    = 10000;
     inline uint32_t manifestTimeoutRecv    = 10000;
 
+    // [manifest] pins_on_test_branch — keep applying Lua `setManifestid` gids to
+    // an app that Steam has on a non-default branch. Off by default: a Lua
+    // manifest set describes ONE build (the Hubcap-generated ones stamp
+    // "-- Build: <id> (public branch)"), so re-imposing those gids over the
+    // beta branch's depot config is what makes Steam fail the branch, fall back
+    // to public and drop the appmanifest betakey.
+    inline bool manifestPinsOnTestBranch = false;
+
+    // [license] refresh_on_startup — re-assert the injected package on the first
+    // ownership query of every launch (MarkLicenseAsChanged + ProcessPending
+    // LicenseUpdates). Required for Lua changes to show up without a restart,
+    // but it also makes steamclient rebuild app configs right at startup, which
+    // is when a selected test branch's betakey can be rewritten away. Turn it off
+    // to test that link: pins and manifest lookup still apply, the library just
+    // keeps Steam's own license view until the next launch.
+    inline bool licenseRefreshOnStartup = true;
+
     // [log]
     inline LogLevel logLevel = LogLevel::Debug;
-
     // derived from configPath: <steam>/opensteamtool/
     inline std::string logDir;
 

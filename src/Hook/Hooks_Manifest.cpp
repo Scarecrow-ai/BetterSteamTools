@@ -2,6 +2,7 @@
 #include "HookMacros.h"
 #include "dllmain.h"
 #include "OSTPlatform/include/Thread.h"
+#include "Utils/SteamConfig/BetaKeeper.h"
 #include "Utils/SteamMetadata/ManifestCache.h"
 #include "OSTPlatform/include/Dialog.h"
 #include <atomic>
@@ -133,6 +134,26 @@ namespace {
             }
         }
 
+        // pbBetaFallback is how steamclient reports "the branch this app asked
+        // for could not be resolved, using public instead". The app config
+        // writer then persists the manifest WITHOUT its "betakey", which is
+        // exactly the "my selected test branch went back to default" symptom —
+        // and the reason it hits unlocked games is that their beta-branch
+        // manifests are not in the appinfo the client is served, while this
+        // tool's fake-license refresh right after logon makes the client do the
+        // resolution while appinfo is still in flight.
+        //
+        // Log what was lost (so manifest.log/beta.log explain it) and let
+        // BetaKeeper put the key back once the writer is done with the file.
+        if (pbBetaFallback && *pbBetaFallback) {
+            const auto branch = BetaKeeper::LastKnownBranch(AppId);
+            LOG_MANIFEST_WARN("BuildDepotDependency: app {} fell back to the default branch "
+                              "(requested beta {}) — steamclient will drop the appmanifest "
+                              "betakey; BetaKeeper restores it",
+                              AppId, branch ? *branch : std::string("<none recorded>"));
+            BetaKeeper::NotifyBetaFallback(AppId);
+        }
+
         if (!result) return result;
 
         // Steam reports zero depots for an app during the window where its
@@ -177,8 +198,25 @@ namespace {
 
         const auto& overrides = LuaConfig::GetManifestOverrides();
 
+        // A Lua manifest set describes ONE build. The Hubcap-generated files
+        // most configs come from even stamp that in their header
+        // ("-- Build: <id> (public branch)"), and every depot in them is pinned
+        // with setManifestid. Forcing those public-branch gids into the depot
+        // config of an app Steam has on a test branch is what breaks the branch:
+        // steamclient cannot satisfy it ("has N missing manifests for beta ...
+        // falling back to public"), falls back to public and persists the app
+        // manifest WITHOUT its betakey — so the selection is gone on the next
+        // launch. Branch-aware tools avoid this by installing the gids that
+        // belong to the branch instead.
+        //
+        // So while an app sits on a non-default branch, its pins are left alone.
+        // [manifest] pins_on_test_branch = true restores the old behaviour for
+        // configs whose pins really are the beta's gids.
+        const auto testBranch = BetaKeeper::SelectedBranch(AppId);
+        const bool mayPin = Config::manifestPinsOnTestBranch || !testBranch;
+
         // Apply manifest overrides in place (only depots a lua explicitly pins).
-        if (!overrides.empty() && pDepotInfo && pDepotInfo->m_Size) {
+        if (!overrides.empty() && mayPin && pDepotInfo && pDepotInfo->m_Size) {
             for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
                 DepotEntry& e = pDepotInfo->m_Memory.m_pMemory[i];
                 auto it = overrides.find(e.DepotId);
@@ -192,6 +230,10 @@ namespace {
                     e.ManifestSize = newSize;
                 }
             }
+        } else if (!overrides.empty() && !mayPin) {
+            LOG_MANIFEST_INFO("BuildDepotDependency: app {} is on test branch \"{}\" — leaving its {} "
+                              "Lua manifest pin(s) out so the branch can resolve",
+                              AppId, *testBranch, overrides.size());
         }
 
         // No pre-seeding here. It used to run a synchronous sweep over the depot
@@ -225,6 +267,13 @@ namespace {
               void* a1, void* a2, int appId, uint32_t depotId,
               uint64_t manifestGid, const char* branch)
     {
+        // The branch argument is ground truth for "which branch is this app
+        // running right now". Steam rewrites app manifests from scratch during a
+        // session and can leave the saved betakey out while it keeps loading this
+        // branch, so record it: BetaKeeper restores the key from this instead of
+        // having to guess.
+        if (branch && *branch) BetaKeeper::NoteActiveBranch(static_cast<AppId_t>(appId), branch);
+
         // Only depots OST unlocks and does not own (lua-added, incl. workshop
         // apps). A bounded blocking fetch: the original checks disk on the very
         // next line, so an archive hit converts into a first-attempt success; a

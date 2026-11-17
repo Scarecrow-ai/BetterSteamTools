@@ -106,6 +106,48 @@ The `extract_tickets` tool dumps the `AppTicket` and `ETicket` hex strings you n
 
   Known to need it: Bodycam (2406770). If a game works without it, leave it off.
 
+### Game test branches (betas)
+
+Steam persists a game's selected test branch per app, not in this tool's config:
+`<library>/steamapps/appmanifest_<appid>.acf` → `"UserConfig"` → `"betakey"`.
+With that key in place Steam resolves the branch and mounts its depots; once it is
+gone from the file, the next launch starts from the default branch.
+
+The usual failure is **not** the branch resolution. On a real install the client
+keeps loading the beta's depots (the game runs the beta build) while Steam
+rewrites the manifest **without** `betakey`: identical pair of timestamps —
+`AppID 3450310 beta changed: 1.4.2-prev_open_beta` at 22:12:13, manifest rewritten
+at 22:12:17 with `UserConfig` cut back to `"language"`, and not one
+`falling back to public` warning in any Steam log. The selection is gone while the
+branch keeps running, so the next launch starts from public — either "update
+available, will update to the default branch", or "shows default, cannot switch,
+game still runs the beta".
+
+BST now keeps that record:
+
+- **Restored from the running branch.** `YldLoadDepotManifest` receives the branch
+  Steam is loading for an app, so when a manifest loses its betakey while that
+  branch is still in use, the key is written back — only that key, nothing else in
+  the manifest. `beta.log` names the app, the branch and the reason.
+- **Explicitly.** `keepBeta(appid, "openbeta")` re-asserts a branch
+  unconditionally; `keepBeta(appid)` clears the pin.
+
+Two switches exist to test the trigger on your own install:
+
+- `[license] refresh_on_startup` (default `true`) — BST re-asserts its injected
+  package on the first ownership query of every launch, which is what makes Lua
+  changes apply without restarting. That refresh also makes steamclient rebuild app
+  configs at startup, the prime suspect for the manifest rewrite. Set it to
+  `false` and restart twice: if the betakey now survives, the refresh is the
+  trigger.
+- `[manifest] pins_on_test_branch` (default `false`) — Lua `setManifestid` gids
+  are not applied while an app is on a non-default branch, so a pin set generated
+  for the public branch cannot contradict the beta.
+
+Both paths are logged — `manifest.log` says `fell back to the default branch`,
+`beta.log` says `restored UserConfig betakey` — so a lost selection is never
+silent.
+
 ## Future
 - Steam Cloud synchronization support.(This is a huge project)
 
@@ -135,6 +177,8 @@ setStat(1361510, "76561197960287930") -- use the specified SteamID's achievement
 
 setlegacycdkey(1361510, "ABCD-EFGH-JKMN-PQRS") -- serve this third-party retail CD key at the "Updating product key" step
 -- If not configured, a deterministic synthetic key is generated per app+account (satisfies Steam's local step only).
+
+keepBeta(1361510, "openbeta") -- keep this game on its chosen test branch when Steam drops the selection
 ```
 
 All function names are **case-insensitive**. `setAppTicket`, `setappticket`, `SetAppticket`, `SETAPPTICKET` etc. are all equivalent. The same applies to every registered function (`addAppId`, `AddToken`, `SETManifestid`, etc.).
@@ -262,6 +306,7 @@ Debug builds write per-module log files under `<Steam>/opensteamtool/`:
 | `achievement.log`   | `LOG_ACHIEVEMENT_*` | UserStats requests/responses, steamid spoofing |
 | `pics.log`          | `LOG_PICS_*` | PICS access token injection |
 | `package.log`       | `LOG_PACKAGE_*` | Package injection, FileWatcher events |
+| `beta.log`          | `LOG_BETA_*` | App-manifest `betakey` scanning, branch repairs and `keepBeta` pins |
 | `onlinefix.log`     | `LOG_ONLINEFIX_*` | Online fix (480 AppId spoofing) |
 | `richpresence.log`  | `LOG_RICHPRESENCE_*` | Rich Presence packet construction and injection |
 | `steamui.log`       | `LOG_STEAMUI_*` | SteamUI hook diagnostics |

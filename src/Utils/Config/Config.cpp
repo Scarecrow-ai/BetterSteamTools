@@ -13,12 +13,14 @@ namespace {
     struct Snapshot {
         std::string manifestProvider = "opensteamtool";
         ManifestTimeouts manifestTimeouts;
+        bool manifestPinsOnTestBranch = false;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
         std::vector<std::string> luaPaths;
         std::vector<std::string> remoteUrlTemplates;
         bool statsEnableApi = true;
         bool updateEnabled = true;
+        bool licenseRefreshOnStartup = true;
         DonateSettings donate;
         std::vector<InjectDll> injectDlls;
         CloudSettings cloud;
@@ -50,12 +52,14 @@ namespace {
         manifestTimeoutConnect = snapshot.manifestTimeouts.connect;
         manifestTimeoutSend    = snapshot.manifestTimeouts.send;
         manifestTimeoutRecv    = snapshot.manifestTimeouts.recv;
+        manifestPinsOnTestBranch = snapshot.manifestPinsOnTestBranch;
         logLevel               = snapshot.logLevel;
         logDir                 = snapshot.logDir;
         luaPaths               = snapshot.luaPaths;
         remoteUrlTemplates     = snapshot.remoteUrlTemplates;
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
+        licenseRefreshOnStartup = snapshot.licenseRefreshOnStartup;
         donate                 = snapshot.donate;
         injectDlls             = snapshot.injectDlls;
         cloudEnabled           = snapshot.cloud.enabled;
@@ -112,6 +116,14 @@ namespace {
                     snapshot.manifestTimeouts.send = static_cast<uint32_t>(*val);
                 if (auto val = (*manifest)["timeout_recv_ms"].value<int64_t>())
                     snapshot.manifestTimeouts.recv = static_cast<uint32_t>(*val);
+                if (auto val = (*manifest)["pins_on_test_branch"].value<bool>())
+                    snapshot.manifestPinsOnTestBranch = *val;
+            }
+
+            // [license]
+            if (auto license = tbl["license"].as_table()) {
+                if (auto val = (*license)["refresh_on_startup"].value<bool>())
+                    snapshot.licenseRefreshOnStartup = *val;
             }
 
             // [log]

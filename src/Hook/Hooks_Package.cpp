@@ -3,6 +3,7 @@
 #include "Hooks_SteamUI.h"
 #include "dllmain.h"
 #include "Utils/HookSupport/VehCommon.h"
+#include "Utils/SteamConfig/BetaKeeper.h"
 #include <algorithm>
 #include <mutex>
 #include <string>
@@ -31,6 +32,12 @@ namespace {
         }
         oMarkLicenseAsChanged(g_pCUser, kInjectedPackageId, true);
         oProcessPendingLicenseUpdates(g_pCUser);
+        // This is the moment steamclient re-derives app configs, and it is what
+        // rewrites an appmanifest without its betakey. Measured on a real
+        // install: the manifest loses the key in the same second as this startup
+        // ownership pass, and keeps it with this tool's hooks disabled. Let the
+        // keeper re-check straight away instead of waiting for its idle poll.
+        BetaKeeper::RequestScan();
         LOG_PACKAGE_DEBUG("MarkLicenseAsChangedAndProcessUpdates: marked package {} as changed and processed updates", kInjectedPackageId);
         return true;
     }
@@ -38,6 +45,15 @@ namespace {
     void TryProcessPendingLicenseRefresh() {
         if (!g_licenseRefreshPending)
             return;
+        // [license] refresh_on_startup = false: leave Steam's own license view
+        // alone for this launch. Used to test whether the per-launch package
+        // re-assertion is what rewrites an app's config (and drops its betakey);
+        // hot-reloaded Lua changes still go through NotifyLicenseChanged.
+        if (!Config::licenseRefreshOnStartup) {
+            g_licenseRefreshPending = false;
+            LOG_PACKAGE_WARN("[license] refresh_on_startup = false — injected package not re-asserted this launch");
+            return;
+        }
         if (MarkLicenseAsChangedAndProcessUpdates())
             g_licenseRefreshPending = false;
     }

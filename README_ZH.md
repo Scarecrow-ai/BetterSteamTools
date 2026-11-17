@@ -98,6 +98,40 @@
 ### 在线修复
 - 在 Steam 启动参数中添加 `-onlinefix` 以在需要使用大厅匹配的游戏里启用基于 480 的在线游戏。当前限制是同一时间只能运行一个这样的游戏。要撤销，只需从启动参数中移除 `-onlinefix` — 下次启动时在线游戏恢复正常
 
+### 游戏测试分支（beta）
+
+游戏的测试分支由 Steam 按 app 记录，不在本工具的配置里：
+`<库目录>/steamapps/appmanifest_<appid>.acf` → `"UserConfig"` → `"betakey"`。
+选中分支后 Steam 会按它解析并挂载对应的 depot；这个键一旦从文件里消失，下次启动
+就从公共分支开始。
+
+真正的故障**不在分支解析**。在一台真实机器上抓到的证据是：客户端一直在加载 beta 的
+depot（游戏确实跑在测试分支上），却把 appmanifest **去掉 `betakey`** 重写了一遍 ——
+时间戳几乎重合：`AppID 3450310 beta changed: 1.4.2-prev_open_beta` 记录于 22:12:13，
+manifest 在 22:12:17 被重写、`UserConfig` 只剩 `"language"`，而且所有 Steam 日志里
+**没有一条** `falling back to public`。选择丢了，分支还在跑，于是下次启动从公共分支开始 ——
+也就是你看到的两种表现："提示需要更新、会更新回默认分支" 或 "显示默认分支、不能切换、
+进游戏还是测试分支"。
+
+BST 现在负责保住这条记录：
+
+- **按正在运行的分支补回**：`YldLoadDepotManifest` 能拿到 Steam 正在为某个 app 加载的
+  分支名；只要 manifest 在"该分支仍在被使用"的情况下去掉了 `betakey`，就把这个键写回去
+  （只改这一个键，manifest 其它内容不动）。`beta.log` 记录 app、分支和原因。
+- **显式固定**：`keepBeta(appid, "openbeta")` 无条件重新写入该分支，`keepBeta(appid)` 取消。
+
+另有两个开关，专门用来在你自己的机器上定位触发点：
+
+- `[license] refresh_on_startup`（默认 `true`）：每次启动的首次 ownership 查询时重新声明
+  注入的 package —— 这是 Lua 改动能免重启生效的原因，但它也会让 steamclient 在启动阶段重建
+  app 配置，是 manifest 被重写的头号嫌疑。设成 `false` 后重启两次：如果 `betakey` 这次活下来，
+  触发点就是它。
+- `[manifest] pins_on_test_branch`（默认 `false`）：app 处于非默认分支时不套用 Lua 的
+  `setManifestid` 钉，避免"按公共分支生成的一套钉"和 beta 冲突。
+
+两条路径都有日志：`manifest.log` 里的 `fell back to the default branch`、
+`beta.log` 里的 `restored UserConfig betakey` —— 选择丢失不会再是"无声无息"的。
+
 ## 未来计划
 - Steam 云同步支持。（这是个超级大工程）
 
@@ -125,6 +159,8 @@ setETicket(1361510,"0100000000000000...") -- 将 ETicket 写入凭据存储；�
 
 setStat(1361510, "76561197960287930") -- 使用指定 SteamID 的成就数据用于 appid 1361510
 -- 若未配置，启用时使用 stats API；否则使用默认 SteamID 76561198028121353
+
+keepBeta(1361510, "openbeta") -- Steam 丢掉测试分支选择时，把该游戏保持在所选分支上
 ```
 
 所有函数名**不区分大小写**。`setAppTicket`、`setappticket`、`SetAppticket`、`SETAPPTICKET` 等都是等价的。每个注册的函数都适用（`addAppId`、`AddToken`、`SETManifestid` 等）。
@@ -240,6 +276,7 @@ url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 | `achievement.log` | `LOG_ACHIEVEMENT_*` | UserStats 请求/响应、steamid 欺骗 |
 | `pics.log` | `LOG_PICS_*` | PICS 访问令牌注入 |
 | `package.log` | `LOG_PACKAGE_*` | 包注入、FileWatcher 事件 |
+| `beta.log` | `LOG_BETA_*` | appmanifest `betakey` 扫描、分支修复与 `keepBeta` 固定 |
 | `onlinefix.log` | `LOG_ONLINEFIX_*` | 在线修复（480 AppId 欺骗） |
 | `richpresence.log` | `LOG_RICHPRESENCE_*` | 丰富状态包构造和注入 |
 | `steamui.log` | `LOG_STEAMUI_*` | SteamUI 钩子诊断 |

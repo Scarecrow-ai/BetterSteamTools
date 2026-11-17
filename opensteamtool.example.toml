@@ -56,6 +56,29 @@ timeout_connect_ms = 5000
 timeout_send_ms    = 10000
 timeout_recv_ms    = 10000
 
+# Keep applying Lua `setManifestid` gids to an app Steam has on a test (beta)
+# branch.
+#
+# Default false. A Lua manifest set describes one build — the Hubcap-generated
+# files stamp it in their header ("-- Build: <id> (public branch)") and pin every
+# depot — so forcing those gids into a beta branch's depot config makes
+# steamclient reject the branch ("has N missing manifests for beta ... falling
+# back to public") and write the app manifest without its betakey, i.e. the
+# selected test branch reverts to default on the next launch. With this false,
+# pins are left out while a non-default branch is selected, so the branch can
+# resolve. Set true if your pins are the beta branch's own gids.
+pins_on_test_branch = false
+
+[license]
+# Re-assert the injected package on the first ownership query of every launch
+# (MarkLicenseAsChanged + ProcessPendingLicenseUpdates). Lua changes then apply
+# without restarting Steam — but the refresh also makes steamclient rebuild app
+# configs right at startup, which is when a selected test branch's appmanifest
+# betakey can be rewritten away. Set false to test that link: pins and manifest
+# lookup still apply, the library just keeps Steam's own license view for this
+# launch.
+refresh_on_startup = true
+
 [donate]
 # Contribute manifest request codes for depots THIS account owns, so other users
 # can download those games. Codes are minted on demand from your signed-in Steam

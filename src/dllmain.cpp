@@ -8,6 +8,7 @@
 #include "Utils/SteamMetadata/ManifestDonor.h"
 #include "Utils/SteamMetadata/PatternLoader.h"
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
+#include "Utils/SteamConfig/BetaKeeper.h"
 #include "Utils/Tokeer/TokeerBridge.h"
 #ifdef OST_ENABLE_UPDATER
 #include "Utils/Update/AppUpdater.h"
@@ -98,6 +99,15 @@ static uint32_t InitThread(OSTPlatform::DynamicLibrary::ModuleHandle selfModule)
     // request. Started after the hooks are in place because it needs the
     // netpacket send path; it idles until the license list resolves anyway.
     ManifestDonor::Start();
+
+    // Keeps an app's selected test branch (beta) alive. steamclient drops the
+    // appmanifest "betakey" when it cannot resolve the branch — routine for
+    // unlocked games, whose beta manifests are not in the appinfo the client is
+    // served — which is why the choice reverts to public on the next launch.
+    // Repairs a dropped key after the depot-config hook reports a beta fallback,
+    // and unconditionally for anything a Lua config pins with keepBeta().
+    // Runs on its own thread, reading manifests; idle cost is a few stats.
+    BetaKeeper::Start();
 
     // Register the bst:// URI scheme so the website can drive code redemption via this
     // DLL (rundll32 handler). HKCU, no admin; idempotent.

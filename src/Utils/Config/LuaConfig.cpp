@@ -2,6 +2,7 @@
 #include "OSTPlatform/include/Http.h"
 #include "OSTPlatform/include/Numbers.h"
 #include "Utils/Config/LuaConfig.h"
+#include "Utils/SteamConfig/BetaKeeper.h"
 #include "Utils/SteamMetadata/StatsClient.h"
 #include "Utils/Tickets/AppTicket.h"
 
@@ -297,6 +298,36 @@ namespace LuaConfig{
         return 0;
     }
 
+    static int lua_keepBeta(lua_State* L) {
+        // keepBeta(integer appid [, string branch])
+        // Re-assert a game's test-branch selection (Library -> Properties ->
+        // Betas) whenever Steam drops it from appmanifest_<appid>.acf. Steam
+        // removes that "betakey" when it cannot resolve the branch, which is why
+        // the choice reverts to public on the next launch. Calling it with no
+        // branch, or with "", clears the pin.
+        int argc = lua_gettop(L);
+        if (argc < 1 || !lua_isinteger(L, 1)) {
+            return luaL_error(L, "keepBeta requires (appid: integer [, branch: string])");
+        }
+
+        lua_Integer value = lua_tointeger(L, 1);
+        if (value <= 0 || value > static_cast<lua_Integer>(UINT32_MAX)) {
+            return luaL_error(L, "keepBeta: appid out of range");
+        }
+        const AppId_t appId = static_cast<AppId_t>(value);
+
+        if (argc < 2 || lua_isnoneornil(L, 2)) {
+            BetaKeeper::Unpin(appId);
+            return 0;
+        }
+        if (!lua_isstring(L, 2)) {
+            return luaL_error(L, "keepBeta: branch must be a string");
+        }
+
+        BetaKeeper::Pin(appId, std::string(lua_tostring(L, 2)));
+        return 0;
+    }
+
     static int lua_addprocess(lua_State* L) {
         // addprocess(appid, "ExeName.exe")
         // Maps a process exe name to an appid so OST can identify games
@@ -513,6 +544,7 @@ namespace LuaConfig{
         register_func(g_lua_state, "addappid", lua_addappid);
         register_func(g_lua_state, "addtoken", lua_addtoken);
         register_func(g_lua_state, "setlegacycdkey", lua_setlegacycdkey);
+        register_func(g_lua_state, "keepbeta", lua_keepBeta);
         register_func(g_lua_state, "addprocess", lua_addprocess);
         register_func(g_lua_state, "forcedenuvo", lua_forcedenuvo);
         register_func(g_lua_state, "seteticketurl", lua_seteticketurl);
