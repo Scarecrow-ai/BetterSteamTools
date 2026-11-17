@@ -119,33 +119,36 @@ is the visible symptom:
 1. **The record is dropped.** Steam rewrites the manifest without `betakey` —
    measured: `AppID 3450310 beta changed: 1.4.2-prev_open_beta` at 22:12:13,
    manifest rewritten at 22:12:17 with `UserConfig` cut back to `"language"`.
-2. **The branch does not resolve.** `CUserAppManager::BuildDepotDependency` reports
-   `pbBetaFallback = true` for that app and hands back the **public** build's
-   depot gids (measured: `3450311 gid 5639139026613178064`, public build 26043558,
-   while the manifest held the beta's `7089855431742306378` / build 26377361).
-   The client then keeps `buildid` on the public build and treats the app as "update
-   required", which is the "it reverted to the default branch" the user sees.
+2. **The branch is refused.** `CUserAppManager::BuildDepotDependency` reports
+   `pbBetaFallback = true` for that app: the branch manifests it was served are not
+   used for an app it believes it does not own, so it hands back the public build's
+   depot gids instead (measured: `3450311 gid 7089855431742306378`, public build
+   26377361, while that branch's own build is `5639139026613178064` / 26043558).
+   Both rows are in `appcache/appinfo.vdf`: `depots/<depot>/manifests/<branch>/gid`
+   and the branch's build id under `depots/branches/<branch>/buildid`, so the file
+   is the authoritative local branch table.
 
 BST answers both:
 
 - **Restores the record.** Whenever the manifest loses `betakey` while that branch
   is still the user's choice, the key is written back — only that key, nothing else
   in the manifest. `beta.log` names the app, the branch and the reason.
-- **Keeps the branch's build.** On a reported fallback the depot entries are pointed
-  at the branch's own build and `pbBetaFallback` is cleared, so the branch counts as
-  resolved instead of being rolled back to public. The branch's depot set is captured
-  at the only unambiguous moment — when Steam itself changes the installed depots
-  while a betakey is in the manifest — and remembered in
-  `<Steam>/opensteamtool/beta-depots.txt`.
+- **Knows the branch's build.** `AppInfoFile` parses that table out of the client's
+  appinfo cache (keys index a string pool, string values are inline; blobs are
+  located by their root tag and validated strictly, so the connection-record header
+  never has to be parsed). It is used for diagnostics today and, behind the switch
+  below, to answer a fallback.
 - **Explicitly.** `keepBeta(appid, "openbeta")` re-asserts a branch unconditionally;
   `keepBeta(appid)` clears the pin.
 
-Because of that capture point, the branch has to be selected **once** with BST
-installed (Steam installs the branch build and BST records it). After that every
-launch keeps it, even when Steam would fall back.
+Switches:
 
-Two switches exist to test the trigger on your own install:
-
+- `[manifest] answer_beta_fallback` (default `false`) — on a reported fallback, point
+  the depot entries (and `pBuildId`) at the branch's build read from appinfo, then
+  clear `pbBetaFallback`. Measured with it on: the target build moves to the branch
+  and the build id moves with it, but Steam then sits on "update required" with
+  `0 bytes to download, 0 bytes to stage` and does not start the job, so it is not
+  the default. Keeping the betakey is what fixes a lost test branch.
 - `[license] refresh_on_startup` (default `true`) — BST re-asserts its injected
   package on the first ownership query of every launch, which is what makes Lua
   changes apply without restarting. That refresh is also what makes steamclient
@@ -156,10 +159,10 @@ Two switches exist to test the trigger on your own install:
   are not applied while an app is on a non-default branch, so a pin set generated
   for the public branch cannot contradict the beta.
 
-Both paths are logged — `manifest.log` says `fell back to the default branch` and
-then `restored branch "…" from the remembered depot set`, `beta.log` says
-`captured branch "…" build` and `restored UserConfig betakey` — so a lost selection
-is never silent.
+Everything is logged: `manifest.log` reports the fallback (and, with the switch on,
+which depots and build id were moved), `beta.log` reports `restored UserConfig betakey`
+and the appinfo table size at startup (`appinfo cache: N app(s), M branch(es)`), so a
+lost selection is never silent.
 
 ## Future
 - Steam Cloud synchronization support.(This is a huge project)
