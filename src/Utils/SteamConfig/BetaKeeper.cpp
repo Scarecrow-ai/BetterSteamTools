@@ -113,14 +113,17 @@ namespace {
             pos = end + 1;
             if (line.empty() || line.front() == '#') continue;
 
-            const size_t tab1 = line.find('\t');
-            if (tab1 == std::string_view::npos) continue;
-            const size_t tab2 = line.find('\t', tab1 + 1);
-            if (tab2 == std::string_view::npos) continue;
+            const size_t tab = line.find('\t');
+            if (tab == std::string_view::npos) continue;
 
-            const std::string appIdText(line.substr(0, tab1));
-            const std::string branch(line.substr(tab1 + 1, tab2 - tab1 - 1));
-            const std::string_view depots(line.substr(tab2 + 1));
+            // "<appid>|<branch>" then a tab, then the depot list.
+            const std::string_view head = line.substr(0, tab);
+            const std::string_view depots = line.substr(tab + 1);
+            const size_t bar = head.find('|');
+            if (bar == std::string_view::npos) continue;
+
+            const std::string appIdText(head.substr(0, bar));
+            const std::string branch(head.substr(bar + 1));
             if (appIdText.empty() || branch.empty()) continue;
 
             AppId_t appId = 0;
