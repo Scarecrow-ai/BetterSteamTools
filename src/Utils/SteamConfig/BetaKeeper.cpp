@@ -59,6 +59,11 @@ namespace {
     // start, and the log should not fill with it).
     constexpr uint32_t kMaxRepairLogs = 3;
 
+    // How long after an announced fallback a depot-set change is treated as part
+    // of that fallback (Steam rewrites the set back to the public build right
+    // after it) and therefore must not be captured as the branch's own build.
+    constexpr std::chrono::minutes kFallbackCaptureGuard{15};
+
     std::mutex g_mutex;                                        // guards the four maps below
     std::unordered_map<AppId_t, std::string> g_pins;           // keepBeta() targets
     std::unordered_map<AppId_t, std::string> g_lastKnown;      // last non-empty betakey on disk
@@ -69,6 +74,10 @@ namespace {
     std::unordered_map<std::string, std::vector<InstalledDepot>> g_branchDepots;
     std::mutex g_cacheMutex;                                   // serialises cache file writes
     std::atomic_bool g_cacheDirty{false};
+    // When steamclient last announced a beta fallback per app. A fallback is
+    // followed by a rewrite of the depot set back to the public build, so any
+    // depot change near it must not be mistaken for the branch's own build.
+    std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_fallbackAt;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point>
                                              g_pendingFallback; // hook saw a beta fallback
     std::unordered_map<AppId_t, uint32_t>    g_repairCount;    // repairs per app this session
@@ -321,6 +330,24 @@ namespace {
         const auto installedDepots = FindInstalledDepots(*text);
         {
             std::lock_guard<std::mutex> lock(g_mutex);
+
+            // Did Steam change the installed depot set since the previous pass?
+            bool depotsChanged = false;
+            const auto prevInstalled = g_installed.find(*appId);
+            if (prevInstalled != g_installed.end()) {
+                const auto& prev = prevInstalled->second;
+                depotsChanged = prev.size() != installedDepots.size();
+                if (!depotsChanged) {
+                    for (size_t i = 0; i < prev.size(); ++i) {
+                        if (prev[i].depotId != installedDepots[i].depotId ||
+                            prev[i].gid != installedDepots[i].gid) {
+                            depotsChanged = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
             auto& installedSlot = g_installed[*appId];
             installedSlot.clear();
             for (const auto& depot : installedDepots) {
@@ -332,6 +359,28 @@ namespace {
                 g_selected[*appId]  = *current;
             } else {
                 g_selected.erase(*appId);
+            }
+
+            // Capture the branch's build at the only moment it is unambiguous:
+            // Steam changed the installed depot set while a betakey was in the
+            // manifest, and no fallback was announced for this app around that
+            // change (a fallback rewrites the set back to the public build, and
+            // that must never be filed as the branch's own build).
+            const auto recentFallback = g_fallbackAt.find(*appId);
+            const bool fallbackNearby =
+                recentFallback != g_fallbackAt.end() &&
+                std::chrono::steady_clock::now() - recentFallback->second < kFallbackCaptureGuard;
+            if (current && depotsChanged && !installedDepots.empty() && !fallbackNearby) {
+                const std::string cacheKey = std::to_string(*appId) + "|" + *current;
+                std::vector<InstalledDepot>& slot = g_branchDepots[cacheKey];
+                slot.clear();
+                slot.reserve(installedDepots.size());
+                for (const auto& depot : installedDepots) {
+                    slot.push_back({depot.depotId, depot.gid, depot.size});
+                }
+                g_cacheDirty.store(true);
+                LOG_BETA_INFO("app {}: captured branch \"{}\" build ({} depot(s))",
+                              *appId, *current, slot.size());
             }
 
             const auto pin = g_pins.find(*appId);
@@ -604,6 +653,7 @@ namespace BetaKeeper {
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             ArmFallbackLocked(appId);
+            g_fallbackAt[appId] = std::chrono::steady_clock::now();
         }
         g_wake.store(true);
     }
