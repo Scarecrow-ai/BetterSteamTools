@@ -376,7 +376,16 @@ namespace {
         // session and can leave the saved betakey out while it keeps loading this
         // branch, so record it: BetaKeeper restores the key from this instead of
         // having to guess.
-        if (branch && *branch) BetaKeeper::NoteActiveBranch(static_cast<AppId_t>(appId), branch);
+        if (branch && *branch) {
+            BetaKeeper::NoteActiveBranch(static_cast<AppId_t>(appId), branch);
+            // Ground truth for the branch's build: Steam states the branch and the
+            // exact manifest gid it is about to load for it. Remember the pair so a
+            // later launch can restore the branch after steamclient has dropped the
+            // branch's manifests (it does that for apps it believes it does not own).
+            if (depotId && manifestGid) {
+                BetaKeeper::NoteBranchDepot(static_cast<AppId_t>(appId), branch, depotId, manifestGid);
+            }
+        }
 
         // Only depots OST unlocks and does not own (lua-added, incl. workshop
         // apps). A bounded blocking fetch: the original checks disk on the very

@@ -68,6 +68,12 @@ namespace BetaKeeper {
     // recalled from when the branch really was installed.
     std::vector<InstalledDepot> BranchDepots(AppId_t appId, std::string_view branch);
 
+    // Record that the app's branch asks for `depotId` at `gid`. Called from the
+    // depot-manifest acquire hook — the one place Steam states the branch and the
+    // exact manifest it wants for it — so the remember-then-restore path has
+    // ground truth instead of inferring the build from the app manifest.
+    void NoteBranchDepot(AppId_t appId, std::string_view branch, AppId_t depotId, uint64_t gid);
+
     // steamclient said it fell back to the public branch for this app
     // (BuildDepotDependency's pbBetaFallback). Marks the app so the next scan
     // restores its betakey if Steam waived it. No file I/O on the caller thread.

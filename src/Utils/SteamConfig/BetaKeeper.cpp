@@ -155,6 +155,11 @@ namespace {
             ++entries;
         }
         LOG_BETA_INFO("branch depot cache: {} entr(ies) loaded", entries);
+        if (entries == 0 && !text->empty()) {
+            const size_t sample = text->size() < 120 ? text->size() : 120;
+            LOG_BETA_DEBUG("branch depot cache: nothing parsed from \"{}\"",
+                           std::string(text->data(), sample));
+        }
     }
 
     void SaveBranchCache(const std::string& steamRoot) {
@@ -324,21 +329,6 @@ namespace {
                 g_selected[*appId]  = *current;
             } else {
                 g_selected.erase(*appId);
-            }
-
-            // Remember this branch's build while it is real: steamclient drops a
-            // branch's depot manifests for apps it believes it does not own, and
-            // once it rolls the app back the gids are gone from the manifest.
-            if (current && !installedDepots.empty()) {
-                const std::string cacheKey = std::to_string(*appId) + "|" + *current;
-                if (g_branchDepots.find(cacheKey) == g_branchDepots.end()) {
-                    std::vector<InstalledDepot>& slot = g_branchDepots[cacheKey];
-                    slot.reserve(installedDepots.size());
-                    for (const auto& depot : installedDepots) {
-                        slot.push_back({depot.depotId, depot.gid, depot.size});
-                    }
-                    g_cacheDirty.store(true);
-                }
             }
 
             const auto pin = g_pins.find(*appId);
@@ -571,6 +561,30 @@ namespace BetaKeeper {
             out.push_back({depot.depotId, depot.gid, depot.size});
         }
         return out;
+    }
+
+    void NoteBranchDepot(AppId_t appId, std::string_view branch, AppId_t depotId, uint64_t gid) {
+        if (appId == k_uAppIdInvalid || depotId == 0 || gid == 0 || branch.empty()) return;
+        if (EqualsNoCase(branch, "public")) return;   // that build needs no help
+
+        const std::string key = std::to_string(appId) + "|" + std::string(branch);
+        std::lock_guard<std::mutex> lock(g_mutex);
+        auto& set = g_branchDepots[key];
+        for (auto& depot : set) {
+            if (depot.depotId != depotId) continue;
+            if (depot.gid != gid) {
+                LOG_BETA_DEBUG("app {} branch \"{}\": depot {} gid {} -> {}", appId, branch,
+                               depotId, depot.gid, gid);
+                depot.gid = gid;
+                depot.size = 0;          // unknown until a manifest says otherwise
+                g_cacheDirty.store(true);
+            }
+            return;
+        }
+        set.push_back({depotId, gid, 0});
+        g_cacheDirty.store(true);
+        LOG_BETA_DEBUG("app {} branch \"{}\": depot {} gid {} remembered ({} depot(s))",
+                       appId, branch, depotId, gid, set.size());
     }
 
     void NotifyBetaFallback(AppId_t appId) {
