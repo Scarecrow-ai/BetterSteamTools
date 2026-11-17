@@ -112,6 +112,7 @@ add_library(OpenSteamTool SHARED
     Utils/CloudRedirect/CloudRedirectHost.cpp
     Utils/Achievements/LocalAchievements.cpp
     Utils/SteamConfig/BetaKeeper.cpp
+    Utils/SteamConfig/PicsAppInfo.cpp
     Utils/HookSupport/VehCommon.cpp
     Utils/Logging/Log.cpp
     Utils/SteamMetadata/IPCLoader.cpp

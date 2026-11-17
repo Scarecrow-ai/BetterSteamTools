@@ -2,6 +2,8 @@
 #include "Utils/SteamMetadata/ManifestClient.h"
 #include "Utils/SteamMetadata/ManifestDonor.h"
 #include "Utils/SteamMetadata/ManifestCache.h"
+#include "Utils/SteamConfig/BetaKeeper.h"
+#include "Utils/SteamConfig/PicsAppInfo.h"
 #include "Utils/Config/Config.h"
 #include "OSTPlatform/include/Thread.h"
 #include "Hooks_Misc.h"
@@ -2214,6 +2216,39 @@ namespace {
         }
     }
 
+    // ── Product info: per-branch depot manifests ─────────────────────────
+    // CMsgClientPICSProductInfoResponse carries every app's appinfo as binary
+    // KeyValues, and its string table decodes to
+    // depots/<depot>/manifests/<branch>/{gid,size}. steamclient does not use
+    // those entries for an app it believes it does not own — it falls back to the
+    // public branch and rolls the app back — so BetaKeeper keeps what it needs
+    // here to answer that fallback with the branch's own build.
+    namespace Hooks_NetPacket_Pics {
+
+        void HandleRecv(const uint8* pBody, uint32 cbBody) {
+            if (!pBody || cbBody < 16) return;
+
+            const auto result = PicsAppInfo::Harvest(
+                pBody, cbBody,
+                [](uint32_t appId, const PicsAppInfo::BranchEntry& entry) {
+                    if (!BetaKeeper::IsTracked(appId)) return;
+                    BetaKeeper::NoteBranchManifest(appId, entry.branch, entry.manifest.depotId,
+                                                   entry.manifest.gid, entry.manifest.size);
+                });
+
+            if (result.entries) {
+                LOG_PICS_DEBUG("response: harvested {} branch manifest entr(ies) from {} appinfo blob(s)",
+                               result.entries, result.apps);
+            } else if (!result.stringTable) {
+                LOG_PICS_TRACE("response: no appinfo string table in this message (cbBody={})", cbBody);
+            } else {
+                LOG_PICS_TRACE("response: string table found, no branch manifests ({} blobs)",
+                               result.apps);
+            }
+        }
+
+    } // namespace Hooks_NetPacket_Pics
+
     void RecvJob(EMsg eMsg, const uint8* pBody, uint32 cbBody,
                  const uint8* pHdr, uint32 cbHdr)
     {
@@ -2252,6 +2287,10 @@ namespace {
 
         case k_EMsgClientGetAppOwnershipTicketResponse:   // 858
             Hooks_NetPacket_OwnershipTicket::HandleRecv(pBody, cbBody);
+            return;
+
+        case k_EMsgClientPICSProductInfoResponse:      // 8904
+            Hooks_NetPacket_Pics::HandleRecv(pBody, cbBody);
             return;
 
         case k_EMsgClientLicenseList:                  // 780
