@@ -195,8 +195,15 @@ namespace {
             return action;
         }
 
-        std::optional<std::string> current = FindBetaKey(*text, "UserConfig");
-        if (!current) current = FindBetaKey(*text, "MountedConfig");
+        // "UserConfig" holds the user's selection — the record whose loss makes a
+        // branch revert to default. "MountedConfig" only mirrors what the
+        // installed build came from, and steamclient keeps writing THAT one even
+        // while it drops "UserConfig" (measured: right after a beta fallback the
+        // manifest has MountedConfig.betakey set and UserConfig.betakey gone), so
+        // the two must not be conflated when deciding whether anything is owed.
+        const std::optional<std::string> userKey    = FindBetaKey(*text, "UserConfig");
+        const std::optional<std::string> mountedKey = FindBetaKey(*text, "MountedConfig");
+        const std::optional<std::string> current    = userKey ? userKey : mountedKey;
 
         // Decide what this app owes, under the lock and in one shot.
         std::string wanted;
@@ -222,9 +229,10 @@ namespace {
             if (pending != g_pendingFallback.end()) {
                 if (std::chrono::steady_clock::now() > pending->second) {
                     g_pendingFallback.erase(pending);          // stale, drop it
-                } else if (!current) {
-                    // The manifest has already lost the key — this is the
-                    // rewrite the fallback was warning about.
+                } else if (!userKey) {
+                    // steamclient has already rewritten UserConfig away (this is
+                    // the fallback it announced). MountedConfig may still carry
+                    // the branch, which is the best evidence of the selection.
                     g_pendingFallback.erase(pending);
                     if (!pinned) {
                         const auto last = g_lastKnown.find(*appId);
@@ -232,18 +240,21 @@ namespace {
                             wanted = last->second;
                             reason = "Steam fell back to public";
                             fallbackReason = true;
+                        } else if (mountedKey && !mountedKey->empty()) {
+                            wanted = *mountedKey;
+                            reason = "Steam fell back to public (mounted config)";
+                            fallbackReason = true;
                         }
                     }
                 }
-                // Key still present: keep the obligation armed, steamclient has
-                // not persisted the fallback yet.
+                // UserConfig still present: keep the obligation armed,
+                // steamclient has not persisted the fallback yet.
             }
 
-            // The key vanished with no fallback involved. If steamclient is
-            // loading manifests for a test branch right now, that is Steam
-            // rewriting its app config from scratch (the branch it is running
-            // never changes) — put the selection back.
-            if (wanted.empty() && !current) {
+            // No fallback flagged, but steamclient is loading manifests for a
+            // test branch right now while UserConfig has lost the key — it is
+            // rewriting its app config from scratch. Put the selection back.
+            if (wanted.empty() && !userKey) {
                 const auto active = g_activeBranch.find(*appId);
                 if (active != g_activeBranch.end() && !active->second.empty()) {
                     wanted = active->second;
@@ -257,7 +268,7 @@ namespace {
                            current ? *current : std::string("<none>"));
             return action;
         }
-        if (current && *current == wanted) return action;   // already where it belongs
+        if (userKey && *userKey == wanted) return action;   // already where it belongs
 
         const auto patched = WithBetaKey(*text, "UserConfig", wanted);
         if (!patched) return action;
@@ -275,8 +286,8 @@ namespace {
         }
 
         std::string had;
-        if (current) {
-            had = "\"" + *current + "\"";
+        if (userKey) {
+            had = "\"" + *userKey + "\"";
         } else {
             had = "absent";
         }
