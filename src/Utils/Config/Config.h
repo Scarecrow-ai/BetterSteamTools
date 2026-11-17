@@ -73,12 +73,14 @@ namespace Config {
     // to public and drop the appmanifest betakey.
     inline bool manifestPinsOnTestBranch = false;
 
-    // Answer a reported beta fallback by moving the depot config onto the
-    // branch's own build (read from appinfo). Default off: keeping the betakey is
-    // the fix, and forcing the depot config can leave Steam wanting to apply an
-    // update that it never starts (measured: target build moved to the branch,
-    // build id stayed on public, "update required" with 0 bytes).
-    inline bool manifestAnswerBetaFallback = false;
+    // Answer a reported beta fallback by moving the depot config (and pBuildId)
+    // onto the branch's own build, read from appinfo. Measured end to end: the
+    // first launch reports the fallback and gets the branch config, the next
+    // launch has Steam schedule that update, find nothing to download and commit
+    // the branch build ("has no changes", buildid = branch build, fully
+    // installed). Without it the client keeps targeting the public build and
+    // moves the app off the branch.
+    inline bool manifestAnswerBetaFallback = true;
 
     // [license] refresh_on_startup — re-assert the injected package on the first
     // ownership query of every launch (MarkLicenseAsChanged + ProcessPending

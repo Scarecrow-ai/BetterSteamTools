@@ -128,11 +128,12 @@ BST 现在两头都管：
 
 开关：
 
-- `[manifest] answer_beta_fallback`（默认 `false`）：收到 fallback 时，把 depot 条目
-  和 `pBuildId` 一起指到 appinfo 里该分支的构建，再清掉 `pbBetaFallback`。实测打开后
-  目标构建与构建号都会切到分支，但 Steam 随后停在 `update required`、`0 bytes to
-  download, 0 bytes to stage` 且不启动更新任务，所以不作默认值 —— 真正修复"分支丢失"的
-  是保住 `betakey`。
+- `[manifest] answer_beta_fallback`（默认 `true`）：收到 fallback 时，把 depot 条目
+  和 `pBuildId` 一起指到 appinfo 里该分支的构建，再清掉 `pbBetaFallback`。实测端到端：
+  这一次启动把 `TargetBuildID` 切到分支构建，**下一次**启动 Steam 自己调度更新、
+  发现无需下载并直接提交 —— `AppID has no changes`、`buildid` 变成分支构建、
+  `StateFlags` 回到 fully installed，"需要更新"的角标消失。也就是它靠 Steam 自己的
+  簿记完成收尾，而不是硬改 manifest。
 - `[license] refresh_on_startup`（默认 `true`）：每次启动的首次 ownership 查询时重新声明
   注入的 package —— 这是 Lua 改动能免重启生效的原因，也是启动阶段重建 app 配置、
   从而触发 fallback 与重写的原因。设成 `false` 后重启两次：如果 `betakey` 这次活下来，

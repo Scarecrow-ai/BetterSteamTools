@@ -143,12 +143,14 @@ BST answers both:
 
 Switches:
 
-- `[manifest] answer_beta_fallback` (default `false`) — on a reported fallback, point
-  the depot entries (and `pBuildId`) at the branch's build read from appinfo, then
-  clear `pbBetaFallback`. Measured with it on: the target build moves to the branch
-  and the build id moves with it, but Steam then sits on "update required" with
-  `0 bytes to download, 0 bytes to stage` and does not start the job, so it is not
-  the default. Keeping the betakey is what fixes a lost test branch.
+- `[manifest] answer_beta_fallback` (default `true`) — on a reported fallback, point
+  the depot entries and `pBuildId` at the branch's build read from appinfo, then
+  clear `pbBetaFallback`. Measured end to end: that launch moves `TargetBuildID`
+  onto the branch build, and the **next** launch has Steam schedule the update, find
+  nothing to download and commit it — `AppID has no changes`, `buildid` becomes the
+  branch build, `StateFlags` returns to fully installed and the "update required"
+  badge is gone. That second start is what makes it self-healing rather than a
+  forced manifest edit.
 - `[license] refresh_on_startup` (default `true`) — BST re-asserts its injected
   package on the first ownership query of every launch, which is what makes Lua
   changes apply without restarting. That refresh is also what makes steamclient

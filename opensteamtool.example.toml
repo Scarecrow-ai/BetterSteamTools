@@ -69,10 +69,10 @@ timeout_recv_ms    = 10000
 # resolve. Set true if your pins are the beta branch's own gids.
 pins_on_test_branch = false
 # Answer a beta fallback by pointing the depot config at the branch's own build
-# (from the client's appinfo cache). Off by default: keeping the betakey is what
-# fixes a lost test branch; forcing the depot config can leave Steam wanting an
-# update it never starts.
-answer_beta_fallback = false
+# (from the client's appinfo cache). On by default: the launch that reports the
+# fallback gets the branch config, and the next launch lets Steam commit it
+# (measured: "has no changes", buildid = branch build, fully installed).
+answer_beta_fallback = true
 
 [license]
 # Re-assert the injected package on the first ownership query of every launch
