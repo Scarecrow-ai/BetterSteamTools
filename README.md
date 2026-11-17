@@ -113,40 +113,53 @@ Steam persists a game's selected test branch per app, not in this tool's config:
 With that key in place Steam resolves the branch and mounts its depots; once it is
 gone from the file, the next launch starts from the default branch.
 
-The usual failure is **not** the branch resolution. On a real install the client
-keeps loading the beta's depots (the game runs the beta build) while Steam
-rewrites the manifest **without** `betakey`: identical pair of timestamps —
-`AppID 3450310 beta changed: 1.4.2-prev_open_beta` at 22:12:13, manifest rewritten
-at 22:12:17 with `UserConfig` cut back to `"language"`, and not one
-`falling back to public` warning in any Steam log. The selection is gone while the
-branch keeps running, so the next launch starts from public — either "update
-available, will update to the default branch", or "shows default, cannot switch,
-game still runs the beta".
+Two things go wrong for an app Steam believes it does not own, and the second one
+is the visible symptom:
 
-BST now keeps that record:
+1. **The record is dropped.** Steam rewrites the manifest without `betakey` —
+   measured: `AppID 3450310 beta changed: 1.4.2-prev_open_beta` at 22:12:13,
+   manifest rewritten at 22:12:17 with `UserConfig` cut back to `"language"`.
+2. **The branch does not resolve.** `CUserAppManager::BuildDepotDependency` reports
+   `pbBetaFallback = true` for that app and hands back the **public** build's
+   depot gids (measured: `3450311 gid 5639139026613178064`, public build 26043558,
+   while the manifest held the beta's `7089855431742306378` / build 26377361).
+   The client then keeps `buildid` on the public build and treats the app as "update
+   required", which is the "it reverted to the default branch" the user sees.
 
-- **Restored from the running branch.** `YldLoadDepotManifest` receives the branch
-  Steam is loading for an app, so when a manifest loses its betakey while that
-  branch is still in use, the key is written back — only that key, nothing else in
-  the manifest. `beta.log` names the app, the branch and the reason.
-- **Explicitly.** `keepBeta(appid, "openbeta")` re-asserts a branch
-  unconditionally; `keepBeta(appid)` clears the pin.
+BST answers both:
+
+- **Restores the record.** Whenever the manifest loses `betakey` while that branch
+  is still the user's choice, the key is written back — only that key, nothing else
+  in the manifest. `beta.log` names the app, the branch and the reason.
+- **Keeps the branch's build.** On a reported fallback the depot entries are pointed
+  at the branch's own build and `pbBetaFallback` is cleared, so the branch counts as
+  resolved instead of being rolled back to public. The branch's depot set is captured
+  at the only unambiguous moment — when Steam itself changes the installed depots
+  while a betakey is in the manifest — and remembered in
+  `<Steam>/opensteamtool/beta-depots.txt`.
+- **Explicitly.** `keepBeta(appid, "openbeta")` re-asserts a branch unconditionally;
+  `keepBeta(appid)` clears the pin.
+
+Because of that capture point, the branch has to be selected **once** with BST
+installed (Steam installs the branch build and BST records it). After that every
+launch keeps it, even when Steam would fall back.
 
 Two switches exist to test the trigger on your own install:
 
 - `[license] refresh_on_startup` (default `true`) — BST re-asserts its injected
   package on the first ownership query of every launch, which is what makes Lua
-  changes apply without restarting. That refresh also makes steamclient rebuild app
-  configs at startup, the prime suspect for the manifest rewrite. Set it to
-  `false` and restart twice: if the betakey now survives, the refresh is the
-  trigger.
+  changes apply without restarting. That refresh is also what makes steamclient
+  rebuild app configs at startup, which is when the fallback and the rewrite happen.
+  Set it to `false` and restart twice: if the betakey now survives, that refresh is
+  the trigger.
 - `[manifest] pins_on_test_branch` (default `false`) — Lua `setManifestid` gids
   are not applied while an app is on a non-default branch, so a pin set generated
   for the public branch cannot contradict the beta.
 
-Both paths are logged — `manifest.log` says `fell back to the default branch`,
-`beta.log` says `restored UserConfig betakey` — so a lost selection is never
-silent.
+Both paths are logged — `manifest.log` says `fell back to the default branch` and
+then `restored branch "…" from the remembered depot set`, `beta.log` says
+`captured branch "…" build` and `restored UserConfig betakey` — so a lost selection
+is never silent.
 
 ## Future
 - Steam Cloud synchronization support.(This is a huge project)

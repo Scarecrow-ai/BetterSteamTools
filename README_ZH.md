@@ -105,32 +105,42 @@
 选中分支后 Steam 会按它解析并挂载对应的 depot；这个键一旦从文件里消失，下次启动
 就从公共分支开始。
 
-真正的故障**不在分支解析**。在一台真实机器上抓到的证据是：客户端一直在加载 beta 的
-depot（游戏确实跑在测试分支上），却把 appmanifest **去掉 `betakey`** 重写了一遍 ——
-时间戳几乎重合：`AppID 3450310 beta changed: 1.4.2-prev_open_beta` 记录于 22:12:13，
-manifest 在 22:12:17 被重写、`UserConfig` 只剩 `"language"`，而且所有 Steam 日志里
-**没有一条** `falling back to public`。选择丢了，分支还在跑，于是下次启动从公共分支开始 ——
-也就是你看到的两种表现："提示需要更新、会更新回默认分支" 或 "显示默认分支、不能切换、
-进游戏还是测试分支"。
+对一个"Steam 认为你没买"的 app，坏在两处，第二处才是你看到的现象：
 
-BST 现在负责保住这条记录：
+1. **记录被抹掉**。Steam 重写 manifest 时不带 `betakey` —— 实测：
+   `AppID 3450310 beta changed: 1.4.2-prev_open_beta` 记录于 22:12:13，
+   manifest 在 22:12:17 被重写、`UserConfig` 只剩 `"language"`。
+2. **分支解析不了**。`CUserAppManager::BuildDepotDependency` 对该 app 报
+   `pbBetaFallback = true`，返回的是**公共分支**构建的 depot gid —— 实测：
+   `3450311 gid 5639139026613178064`（公共构建 26043558），而 manifest 里记的是
+   beta 的 `7089855431742306378`（构建 26377361）。于是 `buildid` 被写回公共构建、
+   app 被标成"需要更新"，也就是你看到的"分支退回默认"。
 
-- **按正在运行的分支补回**：`YldLoadDepotManifest` 能拿到 Steam 正在为某个 app 加载的
-  分支名；只要 manifest 在"该分支仍在被使用"的情况下去掉了 `betakey`，就把这个键写回去
-  （只改这一个键，manifest 其它内容不动）。`beta.log` 记录 app、分支和原因。
+BST 现在两头都管：
+
+- **把记录补回**：只要 manifest 在该分支仍是用户选择的情况下去掉了 `betakey`，就把它
+  写回去（只改这一个键）。`beta.log` 记录 app、分支和原因。
+- **把分支的构建留住**：收到 fallback 报告时，把 depot 条目指回该分支自己的构建并清掉
+  `pbBetaFallback`，让分支算作"解析成功"，而不是被退回公共分支。这套 depot 集只在唯一
+  没有歧义的时机记录 —— Steam 自己在 manifest 带 betakey 时换掉了已安装的 depot 集 ——
+  并存到 `<Steam>/opensteamtool/beta-depots.txt`。
 - **显式固定**：`keepBeta(appid, "openbeta")` 无条件重新写入该分支，`keepBeta(appid)` 取消。
+
+因为这个记录时机，beta 需要在装了 BST 的情况下**选中过一次**（Steam 会安装该分支构建，
+BST 把它记下来）。之后每次启动都能保住，即使 Steam 本来会 fallback。
 
 另有两个开关，专门用来在你自己的机器上定位触发点：
 
 - `[license] refresh_on_startup`（默认 `true`）：每次启动的首次 ownership 查询时重新声明
-  注入的 package —— 这是 Lua 改动能免重启生效的原因，但它也会让 steamclient 在启动阶段重建
-  app 配置，是 manifest 被重写的头号嫌疑。设成 `false` 后重启两次：如果 `betakey` 这次活下来，
+  注入的 package —— 这是 Lua 改动能免重启生效的原因，也是启动阶段重建 app 配置、
+  从而触发 fallback 与重写的原因。设成 `false` 后重启两次：如果 `betakey` 这次活下来，
   触发点就是它。
 - `[manifest] pins_on_test_branch`（默认 `false`）：app 处于非默认分支时不套用 Lua 的
   `setManifestid` 钉，避免"按公共分支生成的一套钉"和 beta 冲突。
 
-两条路径都有日志：`manifest.log` 里的 `fell back to the default branch`、
-`beta.log` 里的 `restored UserConfig betakey` —— 选择丢失不会再是"无声无息"的。
+全过程都有日志：`manifest.log` 里的 `fell back to the default branch` 和随后的
+`restored branch "…" from the remembered depot set`，`beta.log` 里的
+`captured branch "…" build` 与 `restored UserConfig betakey` —— 选择丢失不会再无声无息。
 
 ## 未来计划
 - Steam 云同步支持。（这是个超级大工程）
