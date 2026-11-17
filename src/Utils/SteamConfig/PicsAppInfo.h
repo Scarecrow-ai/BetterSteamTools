@@ -38,6 +38,8 @@ namespace PicsAppInfo {
     struct HarvestResult {
         uint32_t apps    = 0;   // appinfo buffers that parsed
         uint32_t entries = 0;   // branch manifest entries handed to the visitor
+        uint32_t blobs   = 0;   // binary-KV-looking buffers found in AppInfo fields
+        uint32_t rejected = 0;  // buffers that did not parse as a clean appinfo
         bool     stringTable = false;
     };
 

@@ -353,10 +353,14 @@ HarvestResult Harvest(const uint8_t* body, size_t size,
             }
         }
         if (!sawBuffer) continue;
+        ++result.blobs;
 
         uint32_t appId = 0;
         std::vector<BranchEntry> entries;
-        if (!ParseAppInfo(buffer, table, appId, entries)) continue;
+        if (!ParseAppInfo(buffer, table, appId, entries)) {
+            ++result.rejected;
+            continue;
+        }
         if (!appId) appId = messageAppId;
         if (!appId) continue;
 

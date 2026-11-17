@@ -2236,14 +2236,12 @@ namespace {
                                                    entry.manifest.gid, entry.manifest.size);
                 });
 
+            LOG_PICS_DEBUG("response: cbBody={} stringTable={} blobs={} parsed={} rejected={} entries={}",
+                           cbBody, result.stringTable, result.blobs, result.apps,
+                           result.rejected, result.entries);
             if (result.entries) {
-                LOG_PICS_DEBUG("response: harvested {} branch manifest entr(ies) from {} appinfo blob(s)",
-                               result.entries, result.apps);
-            } else if (!result.stringTable) {
-                LOG_PICS_TRACE("response: no appinfo string table in this message (cbBody={})", cbBody);
-            } else {
-                LOG_PICS_TRACE("response: string table found, no branch manifests ({} blobs)",
-                               result.apps);
+                LOG_PICS_INFO("response: harvested {} branch manifest entr(ies) from {} appinfo blob(s)",
+                              result.entries, result.apps);
             }
         }
 
