@@ -36,4 +36,10 @@ namespace Hooks_Misc {
     // Get localized game name via GetAppDataFromAppInfo (cached).
     std::string GetGameNameByAppID(AppId_t appId);
 
+    // Read a KeyValues path from the client's appinfo cache for an app, e.g.
+    // "depots/3450311/manifests/some-beta/gid". Returns "" when the cache has no
+    // such value. This is how the per-branch depot manifests the client already
+    // has in memory can be reached without parsing appinfo.vdf.
+    std::string GetAppInfoValue(AppId_t appId, const char* keyPath);
+
 }

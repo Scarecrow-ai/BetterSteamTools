@@ -1,5 +1,6 @@
 #include "Hooks_Manifest.h"
 #include "HookMacros.h"
+#include "Hooks_Misc.h"
 #include "dllmain.h"
 #include "OSTPlatform/include/Thread.h"
 #include "Utils/SteamConfig/BetaKeeper.h"
@@ -7,6 +8,7 @@
 #include "OSTPlatform/include/Dialog.h"
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <format>
 #include <mutex>
 #include <set>
@@ -181,6 +183,44 @@ namespace {
                     *pbBetaFallback = false;   // branch satisfied — do not waive it
                     LOG_MANIFEST_WARN("BuildDepotDependency: app {} kept branch \"{}\" — {} depot(s) "
                                       "left on the installed build instead of falling back to public",
+                                      AppId, *branch, patched);
+                }
+            }
+
+            // Second chance: the client's own appinfo already carries the branch's
+            // depot manifests ("depots/<depot>/manifests/<branch>/gid" — they are in
+            // appcache/appinfo.vdf), it just does not consult them when it builds the
+            // depot config for an app it believes it does not own. Read them through
+            // the captured GetAppDataFromAppInfo and point the entries at the
+            // branch's build, so the branch resolves and the selection is kept.
+            if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
+                uint32_t patched = 0;
+                for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
+                    DepotEntry& entry = pDepotInfo->m_Memory.m_pMemory[i];
+                    const std::string gidPath =
+                        std::format("depots/{}/manifests/{}/gid", entry.DepotId, *branch);
+                    const std::string gidText = Hooks_Misc::GetAppInfoValue(AppId, gidPath.c_str());
+                    if (gidText.empty()) continue;
+
+                    const uint64_t gid = strtoull(gidText.c_str(), nullptr, 10);
+                    if (!gid || gid == entry.ManifestGid) continue;
+
+                    const std::string sizePath =
+                        std::format("depots/{}/manifests/{}/size", entry.DepotId, *branch);
+                    const std::string sizeText = Hooks_Misc::GetAppInfoValue(AppId, sizePath.c_str());
+                    const uint64_t size = sizeText.empty() ? 0 : strtoull(sizeText.c_str(), nullptr, 10);
+
+                    LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} "
+                                      "(branch \"{}\" manifest from appinfo)",
+                                      AppId, entry.DepotId, entry.ManifestGid, gid, *branch);
+                    entry.ManifestGid = gid;
+                    if (size) entry.ManifestSize = size;
+                    ++patched;
+                }
+                if (patched) {
+                    *pbBetaFallback = false;
+                    LOG_MANIFEST_WARN("BuildDepotDependency: app {} resolved branch \"{}\" from the "
+                                      "client appinfo — {} depot(s) kept",
                                       AppId, *branch, patched);
                 }
             }

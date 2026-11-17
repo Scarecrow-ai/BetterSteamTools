@@ -215,4 +215,17 @@ namespace Hooks_Misc {
         return name;
     }
 
+    // ── Raw appinfo value ────────────────────────────────────────
+    std::string GetAppInfoValue(AppId_t appId, const char* keyPath)
+    {
+        if (!CAPTURE_READY(GetAppDataFromAppInfo) || !keyPath || !*keyPath) return {};
+
+        char buf[128] = {};
+        // Same convention as above: strlen+1 on success, -1 on failure.
+        const int64 len = oGetAppDataFromAppInfo(g_pCAppInfoCache, appId, keyPath,
+                                                 reinterpret_cast<uint8*>(buf), sizeof(buf));
+        if (len <= 1) return {};
+        return std::string(buf, static_cast<size_t>(len - 1));
+    }
+
 }
