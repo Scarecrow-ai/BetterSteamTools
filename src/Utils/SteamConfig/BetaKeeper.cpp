@@ -65,6 +65,10 @@ namespace {
     std::unordered_map<AppId_t, std::string> g_selected;       // betakey currently in the manifest
     std::unordered_map<AppId_t, std::string> g_activeBranch;   // branch Steam is loading depots for
     std::unordered_map<AppId_t, std::vector<InstalledDepot>> g_installed; // installed build per app
+    // "appid|branch" -> depot set of that branch's build, persisted across launches.
+    std::unordered_map<std::string, std::vector<InstalledDepot>> g_branchDepots;
+    std::mutex g_cacheMutex;                                   // serialises cache file writes
+    std::atomic_bool g_cacheDirty{false};
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point>
                                              g_pendingFallback; // hook saw a beta fallback
     std::unordered_map<AppId_t, uint32_t>    g_repairCount;    // repairs per app this session
@@ -81,8 +85,104 @@ namespace {
     // Paths mtimes of the previous pass; worker thread only.
     using MtimeMap = std::unordered_map<std::wstring, std::filesystem::file_time_type>;
 
+    // Defined further down; the branch depot cache helpers use them.
+    std::string PathForLog(const std::filesystem::path& path);
+    std::optional<std::string> ReadSmallFile(const std::filesystem::path& path);
+    bool WriteFileAtomic(const std::filesystem::path& path, const std::string& text);
+
     std::filesystem::path ToPath(const std::string& utf8) {
         return std::filesystem::path(OSTPlatform::Encoding::Utf8ToWide(utf8));
+    }
+
+    // <Steam>/opensteamtool/beta-depots.txt — depot sets remembered per branch.
+    std::filesystem::path BranchCachePath(const std::string& steamRoot) {
+        return ToPath(steamRoot) / L"opensteamtool" / L"beta-depots.txt";
+    }
+
+    // Line format: "<appid>\t<branch>\t<depotId>:<gid>:<size>;<depotId>:<gid>:<size>"
+    void LoadBranchCache(const std::string& steamRoot) {
+        const auto text = ReadSmallFile(BranchCachePath(steamRoot));
+        if (!text) return;
+
+        size_t entries = 0;
+        size_t pos = 0;
+        while (pos < text->size()) {
+            size_t end = text->find('\n', pos);
+            if (end == std::string::npos) end = text->size();
+            std::string_view line(text->data() + pos, end - pos);
+            pos = end + 1;
+            if (line.empty() || line.front() == '#') continue;
+
+            const size_t tab1 = line.find('\t');
+            if (tab1 == std::string_view::npos) continue;
+            const size_t tab2 = line.find('\t', tab1 + 1);
+            if (tab2 == std::string_view::npos) continue;
+
+            const std::string appIdText(line.substr(0, tab1));
+            const std::string branch(line.substr(tab1 + 1, tab2 - tab1 - 1));
+            const std::string_view depots(line.substr(tab2 + 1));
+            if (appIdText.empty() || branch.empty()) continue;
+
+            AppId_t appId = 0;
+            for (char ch : appIdText) {
+                if (ch < '0' || ch > '9') { appId = 0; break; }
+                appId = appId * 10 + static_cast<AppId_t>(ch - '0');
+            }
+            if (!appId) continue;
+
+            std::vector<InstalledDepot> set;
+            size_t p = 0;
+            while (p < depots.size()) {
+                size_t semi = depots.find(';', p);
+                if (semi == std::string_view::npos) semi = depots.size();
+                const std::string_view item = depots.substr(p, semi - p);
+                p = semi + 1;
+
+                const size_t c1 = item.find(':');
+                const size_t c2 = c1 == std::string_view::npos ? std::string_view::npos : item.find(':', c1 + 1);
+                if (c2 == std::string_view::npos) continue;
+
+                InstalledDepot depot;
+                depot.depotId = static_cast<AppId_t>(detail::ParseDigits(item.substr(0, c1)));
+                depot.gid     = detail::ParseDigits(item.substr(c1 + 1, c2 - c1 - 1));
+                depot.size    = detail::ParseDigits(item.substr(c2 + 1));
+                if (depot.depotId && depot.gid) set.push_back(depot);
+            }
+            if (set.empty()) continue;
+
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_branchDepots[std::to_string(appId) + "|" + branch] = std::move(set);
+            ++entries;
+        }
+        LOG_BETA_INFO("branch depot cache: {} entr(ies) loaded", entries);
+    }
+
+    void SaveBranchCache(const std::string& steamRoot) {
+        std::string out;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            for (const auto& [key, set] : g_branchDepots) {
+                out += key;
+                out += '\t';
+                for (size_t i = 0; i < set.size(); ++i) {
+                    if (i) out += ';';
+                    out += std::to_string(set[i].depotId);
+                    out += ':';
+                    out += std::to_string(set[i].gid);
+                    out += ':';
+                    out += std::to_string(set[i].size);
+                }
+                out += '\n';
+            }
+        }
+
+        std::lock_guard<std::mutex> fileLock(g_cacheMutex);
+        std::error_code ec;
+        const auto path = BranchCachePath(steamRoot);
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (!WriteFileAtomic(path, out)) {
+            LOG_BETA_WARN("could not write {}", PathForLog(path));
+        }
     }
 
     // Log-safe spelling of a path: UTF-8 via the platform helper, so a library
@@ -224,6 +324,21 @@ namespace {
                 g_selected[*appId]  = *current;
             } else {
                 g_selected.erase(*appId);
+            }
+
+            // Remember this branch's build while it is real: steamclient drops a
+            // branch's depot manifests for apps it believes it does not own, and
+            // once it rolls the app back the gids are gone from the manifest.
+            if (current && !installedDepots.empty()) {
+                const std::string cacheKey = std::to_string(*appId) + "|" + *current;
+                if (g_branchDepots.find(cacheKey) == g_branchDepots.end()) {
+                    std::vector<InstalledDepot>& slot = g_branchDepots[cacheKey];
+                    slot.reserve(installedDepots.size());
+                    for (const auto& depot : installedDepots) {
+                        slot.push_back({depot.depotId, depot.gid, depot.size});
+                    }
+                    g_cacheDirty.store(true);
+                }
             }
 
             const auto pin = g_pins.find(*appId);
@@ -375,6 +490,7 @@ namespace {
                       steamRoot);
         for (;;) {
             const ScanResult result = Scan(steamRoot, mtimes);
+            if (g_cacheDirty.exchange(false)) SaveBranchCache(steamRoot);
             const int fast = g_fastPasses.load();
             if (fast > 0) g_fastPasses.store(fast - 1);
             const bool busy = result.repaired || result.retry || fast > 0 || HasPendingFallback();
@@ -442,6 +558,21 @@ namespace BetaKeeper {
         return out;
     }
 
+    std::vector<InstalledDepot> BranchDepots(AppId_t appId, std::string_view branch) {
+        std::vector<InstalledDepot> out;
+        if (appId == k_uAppIdInvalid || branch.empty()) return out;
+
+        const std::string key = std::to_string(appId) + "|" + std::string(branch);
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const auto it = g_branchDepots.find(key);
+        if (it == g_branchDepots.end()) return out;
+        out.reserve(it->second.size());
+        for (const auto& depot : it->second) {
+            out.push_back({depot.depotId, depot.gid, depot.size});
+        }
+        return out;
+    }
+
     void NotifyBetaFallback(AppId_t appId) {
         if (appId == k_uAppIdInvalid) return;
         {
@@ -484,6 +615,7 @@ namespace BetaKeeper {
         // One synchronous pass before the worker starts: the depot-config hook
         // asks SelectedBranch() right away, and Steam may already be rebuilding
         // installed apps' configs by the time this thread runs.
+        LoadBranchCache(steamRoot);
         MtimeMap mtimes;
         const ScanResult firstPass = Scan(steamRoot, mtimes);
         LOG_BETA_DEBUG("first pass: {} manifest(s) known, repaired={} retry={}",

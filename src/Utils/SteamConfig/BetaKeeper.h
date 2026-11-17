@@ -62,6 +62,12 @@ namespace BetaKeeper {
     // config should keep instead of rolling back to the public build.
     std::vector<InstalledDepot> InstalledDepots(AppId_t appId);
 
+    // Depot set last seen for (app, branch), remembered across launches in
+    // <Steam>/opensteamtool/beta-depots.txt. steamclient drops a branch's depot
+    // manifests for apps it believes it does not own, so the build has to be
+    // recalled from when the branch really was installed.
+    std::vector<InstalledDepot> BranchDepots(AppId_t appId, std::string_view branch);
+
     // steamclient said it fell back to the public branch for this app
     // (BuildDepotDependency's pbBetaFallback). Marks the app so the next scan
     // restores its betakey if Steam waived it. No file I/O on the caller thread.

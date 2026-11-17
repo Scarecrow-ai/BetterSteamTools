@@ -224,6 +224,38 @@ namespace {
                                       AppId, *branch, patched);
                 }
             }
+
+            // Third chance: the branch's depot set was recorded on a launch where
+            // the branch really was installed (BetaKeeper keeps it in
+            // opensteamtool/beta-depots.txt). Restore that build so Steam does not
+            // roll the app back to public.
+            if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
+                const auto remembered = BetaKeeper::BranchDepots(AppId, *branch);
+                uint32_t patched = 0;
+                for (uint32 i = 0; i < pDepotInfo->m_Size && !remembered.empty(); ++i) {
+                    DepotEntry& entry = pDepotInfo->m_Memory.m_pMemory[i];
+                    for (const auto& depot : remembered) {
+                        if (depot.depotId != entry.DepotId || depot.gid == 0) continue;
+                        if (entry.ManifestGid == depot.gid) break;
+                        LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} "
+                                          "(remembered \"{}\" build)",
+                                          AppId, entry.DepotId, entry.ManifestGid, depot.gid, *branch);
+                        entry.ManifestGid = depot.gid;
+                        if (depot.size) entry.ManifestSize = depot.size;
+                        ++patched;
+                        break;
+                    }
+                }
+                if (patched) {
+                    *pbBetaFallback = false;
+                    LOG_MANIFEST_WARN("BuildDepotDependency: app {} restored branch \"{}\" from the "
+                                      "remembered depot set — {} depot(s) kept",
+                                      AppId, *branch, patched);
+                } else {
+                    LOG_MANIFEST_DEBUG("BuildDepotDependency: app {} branch \"{}\" unresolved and no "
+                                       "remembered depot set yet", AppId, *branch);
+                }
+            }
         }
 
         if (!result) return result;
