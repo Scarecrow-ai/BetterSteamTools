@@ -149,111 +149,47 @@ namespace {
         // BetaKeeper put the key back once the writer is done with the file.
         if (pbBetaFallback && *pbBetaFallback) {
             const auto branch = BetaKeeper::LastKnownBranch(AppId);
-            LOG_MANIFEST_WARN("BuildDepotDependency: app {} fell back to the default branch "
-                              "(requested beta {}) — steamclient will drop the appmanifest "
-                              "betakey; BetaKeeper restores it",
+            LOG_MANIFEST_WARN("BuildDepotDependency: app {} reported a beta fallback "
+                              "(selected branch {}) — the client would drop the appmanifest "
+                              "betakey and move the app off that branch; BetaKeeper answers it",
                               AppId, branch ? *branch : std::string("<none recorded>"));
             BetaKeeper::NotifyBetaFallback(AppId);
 
-            // The entries above are the PUBLIC build's, but the machine is still
-            // on the branch's build. Keep that build instead of letting Steam roll
-            // the app back to public (which is what the user sees as "it reverted
-            // to the default branch"): point each depot at the gid the manifest
-            // already records as installed, and tell the caller the branch is
-            // satisfied so the selection is not waived. Only depots the manifest
-            // lists, and only while that branch is still the user's choice.
-            const auto installed = BetaKeeper::InstalledDepots(AppId);
-            if (branch && !installed.empty() && pDepotInfo && pDepotInfo->m_Size) {
-                uint32_t patched = 0;
+            // Answer the fallback with the branch's own build. The authoritative
+            // list — which depots and gids that branch is made of — is in the
+            // client's appinfo cache; steamclient only refuses to use it for an
+            // app it believes it does not own. If appinfo has no row for the
+            // branch, the manifest's installed depot set is the next best guess.
+            auto applyDepots = [&](const std::vector<BetaKeeper::InstalledDepot>& depots,
+                                   const char* source) -> uint32_t {
+                uint32_t applied = 0;
                 for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
                     DepotEntry& entry = pDepotInfo->m_Memory.m_pMemory[i];
-                    for (const auto& depot : installed) {
+                    for (const auto& depot : depots) {
                         if (depot.depotId != entry.DepotId || depot.gid == 0) continue;
-                        if (entry.ManifestGid == depot.gid) break;   // already the installed build
-                        LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} "
-                                          "(keeping the installed \"{}\" build)",
-                                          AppId, entry.DepotId, entry.ManifestGid, depot.gid, *branch);
+                        if (entry.ManifestGid == depot.gid) break;   // already that build
+                        LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} (from {})",
+                                          AppId, entry.DepotId, entry.ManifestGid, depot.gid, source);
                         entry.ManifestGid = depot.gid;
                         if (depot.size) entry.ManifestSize = depot.size;
-                        ++patched;
+                        ++applied;
                         break;
                     }
                 }
-                if (patched) {
-                    *pbBetaFallback = false;   // branch satisfied — do not waive it
+                return applied;
+            };
+
+            if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
+                uint32_t applied = applyDepots(BetaKeeper::BranchDepots(AppId, *branch), "appinfo");
+                if (!applied) applied = applyDepots(BetaKeeper::InstalledDepots(AppId), "installed build");
+                if (applied) {
+                    *pbBetaFallback = false;   // the branch is satisfiable; do not waive it
                     LOG_MANIFEST_WARN("BuildDepotDependency: app {} kept branch \"{}\" — {} depot(s) "
-                                      "left on the installed build instead of falling back to public",
-                                      AppId, *branch, patched);
-                }
-            }
-
-            // Second chance: the client's own appinfo already carries the branch's
-            // depot manifests ("depots/<depot>/manifests/<branch>/gid" — they are in
-            // appcache/appinfo.vdf), it just does not consult them when it builds the
-            // depot config for an app it believes it does not own. Read them through
-            // the captured GetAppDataFromAppInfo and point the entries at the
-            // branch's build, so the branch resolves and the selection is kept.
-            if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
-                uint32_t patched = 0;
-                for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
-                    DepotEntry& entry = pDepotInfo->m_Memory.m_pMemory[i];
-                    const std::string gidPath =
-                        std::format("depots/{}/manifests/{}/gid", entry.DepotId, *branch);
-                    const std::string gidText = Hooks_Misc::GetAppInfoValue(AppId, gidPath.c_str());
-                    if (gidText.empty()) continue;
-
-                    const uint64_t gid = strtoull(gidText.c_str(), nullptr, 10);
-                    if (!gid || gid == entry.ManifestGid) continue;
-
-                    const std::string sizePath =
-                        std::format("depots/{}/manifests/{}/size", entry.DepotId, *branch);
-                    const std::string sizeText = Hooks_Misc::GetAppInfoValue(AppId, sizePath.c_str());
-                    const uint64_t size = sizeText.empty() ? 0 : strtoull(sizeText.c_str(), nullptr, 10);
-
-                    LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} "
-                                      "(branch \"{}\" manifest from appinfo)",
-                                      AppId, entry.DepotId, entry.ManifestGid, gid, *branch);
-                    entry.ManifestGid = gid;
-                    if (size) entry.ManifestSize = size;
-                    ++patched;
-                }
-                if (patched) {
-                    *pbBetaFallback = false;
-                    LOG_MANIFEST_WARN("BuildDepotDependency: app {} resolved branch \"{}\" from the "
-                                      "client appinfo — {} depot(s) kept",
-                                      AppId, *branch, patched);
-                }
-            }
-
-            // Third chance: the branch's depot set was recorded on a launch where
-            // the branch really was installed (BetaKeeper keeps it in
-            // opensteamtool/beta-depots.txt). Restore that build so Steam does not
-            // roll the app back to public.
-            if (*pbBetaFallback && branch && pDepotInfo && pDepotInfo->m_Size) {
-                const auto remembered = BetaKeeper::BranchDepots(AppId, *branch);
-                uint32_t patched = 0;
-                for (uint32 i = 0; i < pDepotInfo->m_Size && !remembered.empty(); ++i) {
-                    DepotEntry& entry = pDepotInfo->m_Memory.m_pMemory[i];
-                    for (const auto& depot : remembered) {
-                        if (depot.depotId != entry.DepotId || depot.gid == 0) continue;
-                        if (entry.ManifestGid == depot.gid) break;
-                        LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} "
-                                          "(remembered \"{}\" build)",
-                                          AppId, entry.DepotId, entry.ManifestGid, depot.gid, *branch);
-                        entry.ManifestGid = depot.gid;
-                        if (depot.size) entry.ManifestSize = depot.size;
-                        ++patched;
-                        break;
-                    }
-                }
-                if (patched) {
-                    *pbBetaFallback = false;
-                    LOG_MANIFEST_WARN("BuildDepotDependency: app {} restored branch \"{}\" from the "
-                                      "remembered depot set — {} depot(s) kept",
-                                      AppId, *branch, patched);
+                                      "pointed at that branch's build instead of falling back",
+                                      AppId, *branch, applied);
                 } else {
-                    LOG_MANIFEST_DEBUG("BuildDepotDependency: app {} branch \"{}\" unresolved and no "
-                                       "remembered depot set yet", AppId, *branch);
+                    LOG_MANIFEST_DEBUG("BuildDepotDependency: app {} branch \"{}\" has no depot list "
+                                       "in appinfo or in the manifest", AppId, *branch);
                 }
             }
         }

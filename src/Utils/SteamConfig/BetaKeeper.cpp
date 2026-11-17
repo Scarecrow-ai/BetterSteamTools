@@ -1,5 +1,6 @@
 #include "BetaKeeper.h"
 
+#include "AppInfoFile.h"
 #include "AppManifestBeta.h"
 #include "dllmain.h"                          // SteamInstallPath, log macros
 #include "OSTPlatform/include/Encoding.h"
@@ -481,6 +482,11 @@ namespace {
 
     ScanResult Scan(const std::string& steamRoot, MtimeMap& mtimes) {
         ScanResult result;
+
+        // Keep the branch tables current: the answer to a beta fallback is the
+        // branch's own depot list, which only the client's appinfo cache has.
+        AppInfoFile::Refresh(steamRoot);
+
         for (const auto& dir : AppDirs(steamRoot)) {
             std::error_code ec;
             if (!std::filesystem::is_directory(dir, ec)) continue;
@@ -604,6 +610,15 @@ namespace BetaKeeper {
         std::vector<InstalledDepot> out;
         if (appId == k_uAppIdInvalid || branch.empty()) return out;
 
+        // Authoritative source first: the client's own appinfo cache, which lists
+        // exactly the depots and gids that branch's build is made of.
+        for (const auto& depot : AppInfoFile::Lookup(appId, branch)) {
+            out.push_back({depot.depotId, depot.gid, depot.size});
+        }
+        if (!out.empty()) return out;
+
+        // Fall back to what an earlier launch recorded (appinfo may be missing or
+        // unreadable this session).
         const std::string key = std::to_string(appId) + "|" + std::string(branch);
         std::lock_guard<std::mutex> lock(g_mutex);
         const auto it = g_branchDepots.find(key);
