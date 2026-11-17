@@ -152,6 +152,38 @@ namespace {
                               "betakey; BetaKeeper restores it",
                               AppId, branch ? *branch : std::string("<none recorded>"));
             BetaKeeper::NotifyBetaFallback(AppId);
+
+            // The entries above are the PUBLIC build's, but the machine is still
+            // on the branch's build. Keep that build instead of letting Steam roll
+            // the app back to public (which is what the user sees as "it reverted
+            // to the default branch"): point each depot at the gid the manifest
+            // already records as installed, and tell the caller the branch is
+            // satisfied so the selection is not waived. Only depots the manifest
+            // lists, and only while that branch is still the user's choice.
+            const auto installed = BetaKeeper::InstalledDepots(AppId);
+            if (branch && !installed.empty() && pDepotInfo && pDepotInfo->m_Size) {
+                uint32_t patched = 0;
+                for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
+                    DepotEntry& entry = pDepotInfo->m_Memory.m_pMemory[i];
+                    for (const auto& depot : installed) {
+                        if (depot.depotId != entry.DepotId || depot.gid == 0) continue;
+                        if (entry.ManifestGid == depot.gid) break;   // already the installed build
+                        LOG_MANIFEST_INFO("BuildDepotDependency: app {} depot {} gid={} -> {} "
+                                          "(keeping the installed \"{}\" build)",
+                                          AppId, entry.DepotId, entry.ManifestGid, depot.gid, *branch);
+                        entry.ManifestGid = depot.gid;
+                        if (depot.size) entry.ManifestSize = depot.size;
+                        ++patched;
+                        break;
+                    }
+                }
+                if (patched) {
+                    *pbBetaFallback = false;   // branch satisfied — do not waive it
+                    LOG_MANIFEST_WARN("BuildDepotDependency: app {} kept branch \"{}\" — {} depot(s) "
+                                      "left on the installed build instead of falling back to public",
+                                      AppId, *branch, patched);
+                }
+            }
         }
 
         if (!result) return result;

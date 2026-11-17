@@ -25,11 +25,20 @@
 
 #include "Steam/Types.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace BetaKeeper {
+
+    // One depot of the build installed for an app (its manifest's InstalledDepots).
+    struct InstalledDepot {
+        AppId_t  depotId = 0;
+        uint64_t gid     = 0;
+        uint64_t size    = 0;
+    };
 
     // keepBeta(appid, branch): re-assert `branch` for this app whenever the
     // manifest loses it. An empty `branch` clears the pin instead.
@@ -46,6 +55,12 @@ namespace BetaKeeper {
     // a test branch?" signal used to stop re-applying public-branch manifest
     // pins over a beta branch's depot config.
     std::optional<std::string> SelectedBranch(AppId_t appId);
+
+    // Depot set of the build currently installed for the app, read from its
+    // manifest. Used when steamclient cannot resolve the selected branch: the
+    // machine is still on that branch's build, so its gids are what the depot
+    // config should keep instead of rolling back to the public build.
+    std::vector<InstalledDepot> InstalledDepots(AppId_t appId);
 
     // steamclient said it fell back to the public branch for this app
     // (BuildDepotDependency's pbBetaFallback). Marks the app so the next scan

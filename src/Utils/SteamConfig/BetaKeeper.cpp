@@ -64,6 +64,7 @@ namespace {
     std::unordered_map<AppId_t, std::string> g_lastKnown;      // last non-empty betakey on disk
     std::unordered_map<AppId_t, std::string> g_selected;       // betakey currently in the manifest
     std::unordered_map<AppId_t, std::string> g_activeBranch;   // branch Steam is loading depots for
+    std::unordered_map<AppId_t, std::vector<InstalledDepot>> g_installed; // installed build per app
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point>
                                              g_pendingFallback; // hook saw a beta fallback
     std::unordered_map<AppId_t, uint32_t>    g_repairCount;    // repairs per app this session
@@ -209,8 +210,15 @@ namespace {
         std::string wanted;
         const char* reason = nullptr;
         bool fallbackReason = false;
+        const auto installedDepots = FindInstalledDepots(*text);
         {
             std::lock_guard<std::mutex> lock(g_mutex);
+            auto& installedSlot = g_installed[*appId];
+            installedSlot.clear();
+            for (const auto& depot : installedDepots) {
+                installedSlot.push_back({depot.depotId, depot.gid, depot.size});
+            }
+
             if (current) {
                 g_lastKnown[*appId] = *current;
                 g_selected[*appId]  = *current;
@@ -420,6 +428,18 @@ namespace BetaKeeper {
         const auto it = g_selected.find(appId);
         if (it == g_selected.end() || it->second.empty()) return std::nullopt;
         return it->second;
+    }
+
+    std::vector<InstalledDepot> InstalledDepots(AppId_t appId) {
+        std::vector<InstalledDepot> out;
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const auto it = g_installed.find(appId);
+        if (it == g_installed.end()) return out;
+        out.reserve(it->second.size());
+        for (const auto& depot : it->second) {
+            out.push_back({depot.depotId, depot.gid, depot.size});
+        }
+        return out;
     }
 
     void NotifyBetaFallback(AppId_t appId) {

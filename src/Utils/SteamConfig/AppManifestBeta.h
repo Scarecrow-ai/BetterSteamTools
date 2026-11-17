@@ -248,4 +248,71 @@ namespace SteamConfig::AppManifestBeta {
         return folders;
     }
 
+    // ── installed build ────────────────────────────────────────────────────────
+    // The depot set of what is actually on disk:
+    //   "InstalledDepots" { "<depotId>" { "manifest" "<gid>" "size" "<bytes>" } }
+    // ("MountedDepots" on older clients). This is the record of the build the
+    // machine is on, which is what a test branch is mounted from.
+    struct InstalledDepot {
+        uint32_t depotId = 0;
+        uint64_t gid     = 0;
+        uint64_t size    = 0;
+    };
+
+    namespace detail {
+        inline uint64_t ParseDigits(std::string_view text) {
+            uint64_t value = 0;
+            for (char ch : text) {
+                if (ch < '0' || ch > '9') return 0;
+                value = value * 10 + static_cast<uint64_t>(ch - '0');
+            }
+            return value;
+        }
+    }
+
+    inline std::vector<InstalledDepot> FindInstalledDepots(std::string_view text) {
+        std::vector<InstalledDepot> depots;
+        const auto tokens = Tokenize(text);
+        for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+            if (tokens[i].kind != Token::Kind::Value) continue;
+            if (!EqualsNoCase(tokens[i].text, "InstalledDepots") &&
+                !EqualsNoCase(tokens[i].text, "MountedDepots")) continue;
+            if (tokens[i + 1].kind != Token::Kind::Open) continue;
+
+            int depth = 1;
+            for (size_t j = i + 2; j + 1 < tokens.size(); ++j) {
+                if (tokens[j].kind == Token::Kind::Open) { ++depth; continue; }
+                if (tokens[j].kind == Token::Kind::Close) {
+                    if (--depth == 0) break;
+                    continue;
+                }
+                if (depth != 1 || tokens[j].kind != Token::Kind::Value) continue;
+                if (tokens[j + 1].kind != Token::Kind::Open) continue;   // depot block
+
+                InstalledDepot depot;
+                depot.depotId = static_cast<uint32_t>(detail::ParseDigits(tokens[j].text));
+
+                int inner = 1;
+                for (size_t k = j + 2; k + 1 < tokens.size(); ++k) {
+                    if (tokens[k].kind == Token::Kind::Open) { ++inner; continue; }
+                    if (tokens[k].kind == Token::Kind::Close) {
+                        if (--inner == 0) break;
+                        continue;
+                    }
+                    if (inner != 1 || tokens[k].kind != Token::Kind::Value) continue;
+                    if (tokens[k + 1].kind != Token::Kind::Value) continue;
+                    if (EqualsNoCase(tokens[k].text, "manifest")) {
+                        depot.gid = detail::ParseDigits(tokens[k + 1].text);
+                    } else if (EqualsNoCase(tokens[k].text, "size")) {
+                        depot.size = detail::ParseDigits(tokens[k + 1].text);
+                    }
+                }
+
+                if (depot.depotId && depot.gid) depots.push_back(depot);
+            }
+            if (!depots.empty()) break;
+        }
+        return depots;
+    }
+
 } // namespace SteamConfig::AppManifestBeta
