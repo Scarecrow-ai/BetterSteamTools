@@ -68,11 +68,16 @@ namespace BetaKeeper {
     // recalled from when the branch really was installed.
     std::vector<InstalledDepot> BranchDepots(AppId_t appId, std::string_view branch);
 
-    // Record that the app's branch asks for `depotId` at `gid`. Called from the
-    // depot-manifest acquire hook — the one place Steam states the branch and the
-    // exact manifest it wants for it — so the remember-then-restore path has
-    // ground truth instead of inferring the build from the app manifest.
-    void NoteBranchDepot(AppId_t appId, std::string_view branch, AppId_t depotId, uint64_t gid);
+    // Record one branch manifest entry taken from the client's own appinfo
+    // ("depots/<depot>/manifests/<branch>/{gid,size}"). This is the authoritative
+    // branch -> build mapping: it is what Steam itself was served, so it cannot
+    // be confused with the public build the way an app manifest can.
+    void NoteBranchManifest(AppId_t appId, std::string_view branch, AppId_t depotId,
+                            uint64_t gid, uint64_t size);
+
+    // True when the app is one BetaKeeper tracks (its manifest has been seen, or
+    // it is pinned): cheap filter so the appinfo walk touches only wanted apps.
+    bool IsTracked(AppId_t appId);
 
     // steamclient said it fell back to the public branch for this app
     // (BuildDepotDependency's pbBetaFallback). Marks the app so the next scan

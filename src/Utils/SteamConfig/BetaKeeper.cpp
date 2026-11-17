@@ -566,7 +566,8 @@ namespace BetaKeeper {
         return out;
     }
 
-    void NoteBranchDepot(AppId_t appId, std::string_view branch, AppId_t depotId, uint64_t gid) {
+    void NoteBranchManifest(AppId_t appId, std::string_view branch, AppId_t depotId,
+                            uint64_t gid, uint64_t size) {
         if (appId == k_uAppIdInvalid || depotId == 0 || gid == 0 || branch.empty()) return;
         if (EqualsNoCase(branch, "public")) return;   // that build needs no help
 
@@ -575,19 +576,27 @@ namespace BetaKeeper {
         auto& set = g_branchDepots[key];
         for (auto& depot : set) {
             if (depot.depotId != depotId) continue;
+            if (depot.gid == gid && depot.size == size) return;
             if (depot.gid != gid) {
                 LOG_BETA_DEBUG("app {} branch \"{}\": depot {} gid {} -> {}", appId, branch,
                                depotId, depot.gid, gid);
                 depot.gid = gid;
-                depot.size = 0;          // unknown until a manifest says otherwise
-                g_cacheDirty.store(true);
             }
+            if (size) depot.size = size;
+            g_cacheDirty.store(true);
             return;
         }
-        set.push_back({depotId, gid, 0});
+        set.push_back({depotId, gid, size});
         g_cacheDirty.store(true);
-        LOG_BETA_DEBUG("app {} branch \"{}\": depot {} gid {} remembered ({} depot(s))",
-                       appId, branch, depotId, gid, set.size());
+        LOG_BETA_DEBUG("app {} branch \"{}\": depot {} gid {} size {} remembered ({} depot(s))",
+                       appId, branch, depotId, gid, size, set.size());
+    }
+
+    bool IsTracked(AppId_t appId) {
+        if (appId == k_uAppIdInvalid) return false;
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return g_installed.count(appId) != 0 || g_selected.count(appId) != 0 ||
+               g_lastKnown.count(appId) != 0 || g_pins.count(appId) != 0;
     }
 
     void NotifyBetaFallback(AppId_t appId) {

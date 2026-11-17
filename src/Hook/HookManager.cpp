@@ -27,7 +27,7 @@ namespace SteamClient {
         Hooks_CallBack::Install();
         Hooks_Decryption::Install();
         Hooks_IPC::Install();
-        // Hooks_KeyValues::Install();
+        Hooks_KeyValues::Install();
         Hooks_Manifest::Install();
         Hooks_Misc::Install();
         Hooks_NetPacket::Install();
@@ -38,7 +38,7 @@ namespace SteamClient {
         Hooks_CallBack::Uninstall();
         Hooks_Decryption::Uninstall();
         Hooks_IPC::Uninstall();
-        // Hooks_KeyValues::Uninstall();
+        Hooks_KeyValues::Uninstall();
         Hooks_Manifest::Uninstall();
         Hooks_Misc::Uninstall();
         Hooks_NetPacket::Uninstall();
