@@ -282,7 +282,7 @@ namespace {
         auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
         if (!module) return;
         uint8_t* target = module + 0xDA0290;
-        if (target[0] != 0x48 || target[1] != 0x85 || target[2] != 0xC9 || target[3] != 0x74) {
+        if (target[0] != 0x48 || target[1] != 0x85 || target[2] != 0xC9) {
             LOG_MANIFEST_WARN("KV-SETSTR: prologue mismatch at +0xDA0290");
             return;
         }
