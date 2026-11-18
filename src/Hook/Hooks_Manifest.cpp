@@ -1260,11 +1260,19 @@ namespace {
         // rewriting the manifest without it.
         // With the appinfo injection active the client resolves the branch on its
         // own, and rewriting the depot list here would stamp the branch gids as
-        // "installed" (the exact corruption this replaces).
-        if (pbBetaFallback && *pbBetaFallback && AppId != 0 &&
-            Config::GetManifestAnswerBetaFallback() &&
-            !Config::GetManifestInjectBranchManifests()) {
-            const std::string branch = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
+        // "installed" (the exact corruption this replaces). The synthetic branch
+        // is the exception: the client clones the public table for it, so the
+        // answer has to come from here.
+        std::string answerBranch;
+        const std::string betakey = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
+        if (_stricmp(betakey.c_str(), "Pinned") == 0) {
+            answerBranch = PinnedSourceFor(AppId);
+        } else if (pbBetaFallback && *pbBetaFallback && !Config::GetManifestInjectBranchManifests()) {
+            answerBranch = betakey;
+        }
+        if (!answerBranch.empty() && AppId != 0 && Config::GetManifestAnswerBetaFallback() &&
+            _stricmp(answerBranch.c_str(), "public") != 0) {
+            const std::string& branch = answerBranch;
             if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
                 AppInfoFile::Refresh(SteamRootDir().string());
                 const auto branchDepots = AppInfoFile::Lookup(AppId, branch);
@@ -1292,7 +1300,7 @@ namespace {
                             AppId, *pBuildId, branchBuild, branch);
                         *pBuildId = static_cast<uint32>(branchBuild);
                     }
-                    *pbBetaFallback = false;
+                    if (pbBetaFallback) *pbBetaFallback = false;
                     PrefetchBranchManifests(AppId, branch, branchDepots);
                     LOG_MANIFEST_INFO("BETA: app {} answered the beta fallback for branch \"{}\" "
                                       "({} depot(s) matched, {} from appinfo)",
