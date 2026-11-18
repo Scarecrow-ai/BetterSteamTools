@@ -128,6 +128,34 @@ namespace {
         return {};
     }
 
+    // Steam's update job decides what to download from the target depot manifests
+    // in <Steam>/depotcache. When a branch is answered here and that branch's
+    // manifests were never fetched, the job finds nothing to compare, logs
+    // "has no changes" and stamps the new build id without downloading anything
+    // (measured: switching to 1.4.3 recorded build 26105915 while the game folder
+    // still held 1.4.2's 13,941,903,965 bytes and depotcache had no 1.4.3
+    // manifests). Fetch them here, once per app+branch, so the job that follows
+    // has real data to diff.
+    void PrefetchBranchManifests(AppId_t appId, const std::string& branch,
+                                 const std::vector<AppInfoFile::BranchDepot>& depots) {
+        static std::mutex mutex;
+        static std::set<std::string> done;
+        const std::string key = std::format("{}|{}", appId, branch);
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (!done.insert(key).second) return;
+        }
+        std::thread([appId, branch, depots]() {
+            for (const auto& depot : depots) {
+                if (depot.depotId == 0 || depot.gid == 0) continue;
+                ManifestCache::EnsureCached(appId, depot.depotId, depot.gid,
+                                            kPreseedFetchTimeoutMs, nullptr, true);
+                LOG_MANIFEST_INFO("BETA: prefetched manifest for app {} depot {} gid {} (branch \"{}\")",
+                    appId, depot.depotId, depot.gid, branch);
+            }
+        }).detach();
+    }
+
     // Per-fetch timeout for the on-demand pre-seed in YldLoadDepotManifest. Most
     // manifests are Cloudflare edge hits (~100-300 ms); this cap keeps one slow or
     // missing manifest from stalling Steam for long, and on timeout the original
@@ -288,6 +316,7 @@ namespace {
                         *pBuildId = static_cast<uint32>(branchBuild);
                     }
                     *pbBetaFallback = false;
+                    PrefetchBranchManifests(AppId, branch, branchDepots);
                     LOG_MANIFEST_INFO("BETA: app {} answered the beta fallback for branch \"{}\" "
                                       "({} depot(s) matched, {} from appinfo)",
                         AppId, branch, patched, branchDepots.size());
