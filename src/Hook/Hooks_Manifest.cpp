@@ -1318,6 +1318,13 @@ namespace {
         // answer has to come from here.
         std::string answerBranch;
         const std::string betakey = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
+        if (TraceBeta(AppId)) {
+            LOG_MANIFEST_INFO("BETA-CALL: app {} betakey=\"{}\" fallback={} depots={} build={}",
+                              AppId, betakey,
+                              (pbBetaFallback && *pbBetaFallback) ? 1 : 0,
+                              pDepotInfo ? static_cast<int>(pDepotInfo->m_Size) : -1,
+                              (pBuildId ? static_cast<long long>(*pBuildId) : -1LL));
+        }
         if (_stricmp(betakey.c_str(), "Pinned") == 0) {
             answerBranch = PinnedSourceFor(AppId);
         } else if (pbBetaFallback && *pbBetaFallback && !Config::GetManifestInjectBranchManifests()) {
