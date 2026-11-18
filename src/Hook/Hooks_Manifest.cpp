@@ -185,6 +185,11 @@ namespace {
             appId = *reinterpret_cast<AppId_t*>(reinterpret_cast<uint8_t*>(job) + 0x18);
             std::lock_guard<std::mutex> lock(g_jobMutex);
             g_jobApp[job] = appId;
+            if (TraceBeta(appId)) {
+                LOG_MANIFEST_INFO("BETA-JOB: update job entered for app {} (job=0x{:X} kv=0x{:X})",
+                                  appId, reinterpret_cast<uintptr_t>(job),
+                                  *reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(job) + 0xcb8));
+            }
         }
         const __int64 result = oJobUpdate(job);
         if (job) {
@@ -200,6 +205,16 @@ namespace {
         for (const auto& [job, appId] : g_jobApp) {
             auto* bytes = static_cast<uint8_t*>(job);
             if (*reinterpret_cast<void**>(bytes + 0xcb8) == kv) return appId;
+        }
+        // The job may read betakey from a KV it holds elsewhere; with a single job
+        // in flight its app is still unambiguous.
+        if (g_jobApp.size() == 1) {
+            const AppId_t only = g_jobApp.begin()->second;
+            if (TraceBeta(only)) {
+                LOG_MANIFEST_INFO("BETA-JOB: betakey read by the active job (app {}), kv=0x{:X}",
+                                  only, reinterpret_cast<uintptr_t>(kv));
+            }
+            return only;
         }
         return 0;
     }
