@@ -98,6 +98,11 @@ namespace {
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_restoreAt;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_standDownUntil;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_missingSince;
+    // Byte offset into <Steam>/logs/content_log.txt; the client logs every branch
+    // the user picks there, which is the only place a *requested* branch shows up
+    // before the client has written it to the manifest.
+    std::uintmax_t g_contentLogOffset = 0;
+    bool g_contentLogStarted = false;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point>
                                              g_pendingFallback; // hook saw a beta fallback
     std::unordered_map<AppId_t, uint32_t>    g_repairCount;    // repairs per app this session
@@ -569,8 +574,72 @@ namespace {
         bool retry    = false;
     };
 
+    // Follows Steam's own content log for "AppID <id> beta changed: <branch>" and
+    // adopts it as the requested branch. Measured: a click in the Betas dialog
+    // logs that line but the client writes the manifest without the key and does
+    // not start any content work; the branch is applied on a later start, when
+    // the manifest carries it. So recording the request here is what makes the
+    // click survive to that start.
+    void WatchSteamBetaChanges(const std::string& steamRoot) {
+        const std::filesystem::path path = ToPath(steamRoot) / L"logs" / L"content_log.txt";
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(path, ec);
+        if (ec || size == 0) return;
+
+        if (!g_contentLogStarted) {
+            // Start at the end: history from previous sessions is not a request.
+            g_contentLogOffset = size;
+            g_contentLogStarted = true;
+            return;
+        }
+        if (size <= g_contentLogOffset) {
+            if (size < g_contentLogOffset) g_contentLogOffset = size;   // truncated
+            return;
+        }
+
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return;
+        in.seekg(static_cast<std::streamoff>(g_contentLogOffset));
+        std::string chunk;
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::string needle = " beta changed: ";
+            const size_t at = line.find("AppID ");
+            if (at == std::string::npos) continue;
+            const size_t branchAt = line.find(needle);
+            if (branchAt == std::string::npos) continue;
+            // "AppID 3450310 beta changed: 1.4.2-prev_open_beta"
+            const size_t idStart = at + 6;
+            const size_t idEnd = line.find(' ', idStart);
+            if (idEnd == std::string::npos || idEnd > branchAt) continue;
+            AppId_t appId = 0;
+            bool digits = idEnd > idStart;
+            for (size_t i = idStart; i < idEnd; ++i) {
+                const char ch = line[i];
+                if (ch < '0' || ch > '9') { digits = false; break; }
+                appId = appId * 10 + static_cast<AppId_t>(ch - '0');
+            }
+            if (!digits || !appId) continue;
+            std::string branch = line.substr(branchAt + needle.size());
+            while (!branch.empty() && (branch.back() == '\r' || branch.back() == ' ')) branch.pop_back();
+            if (branch.empty()) continue;
+
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_lastKnown[appId] = branch;
+            g_selected[appId]  = branch;
+            g_missingSince.erase(appId);
+            g_pendingFallback.erase(appId);
+            g_standDownUntil.erase(appId);
+            LOG_BETA_INFO("app {}: Steam reports branch \"{}\" — recording it as the request",
+                          appId, branch);
+        }
+        g_contentLogOffset = size;
+        g_wake.store(true);
+    }
+
     ScanResult Scan(const std::string& steamRoot, MtimeMap& mtimes) {
         ScanResult result;
+        WatchSteamBetaChanges(steamRoot);
 
         // Keep the branch tables current: the answer to a beta fallback is the
         // branch's own depot list, which only the client's appinfo cache has.
