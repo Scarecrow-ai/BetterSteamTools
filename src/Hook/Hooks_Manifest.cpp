@@ -149,7 +149,7 @@ namespace {
             for (const auto& depot : depots) {
                 if (depot.depotId == 0 || depot.gid == 0) continue;
                 ManifestCache::EnsureCached(appId, depot.depotId, depot.gid,
-                                            kPreseedFetchTimeoutMs, nullptr, true);
+                                            5000, nullptr, true);
                 LOG_MANIFEST_INFO("BETA: prefetched manifest for app {} depot {} gid {} (branch \"{}\")",
                     appId, depot.depotId, depot.gid, branch);
             }
