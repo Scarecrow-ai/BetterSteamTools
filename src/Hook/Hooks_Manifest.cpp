@@ -6,6 +6,8 @@
 #include "Utils/SteamConfig/AppInfoFile.h"
 #include "OSTPlatform/include/DynamicLibrary.h"
 #include <windows.h>
+#include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include "OSTPlatform/include/Dialog.h"
@@ -126,6 +128,86 @@ namespace {
             if (SafeCopy(child->m_sValue, value, sizeof(value)) && value[0]) return value;
         }
         return {};
+    }
+
+
+    // ── KV lookup trace (debug only) ────────────────────────────────────
+    // steamclient reads every branch field through one formatted KeyValues
+    // finder: "branches/%s/buildid", "branches/%s/pwdrequired" and the
+    // "manifests/<branch>/..." paths the update job needs. Logging what it asks
+    // for (and whether the lookup missed) is the only way to tell how a branch
+    // resolution fails without a symbol server.
+    using KvFindFmt_t = void* (__fastcall*)(void* parent, const char* fmt, bool create,
+                                            void* out, void* a4, void* a5);
+    KvFindFmt_t oKvFindFmt = nullptr;
+    std::atomic_bool g_kvTraceInstalled{false};
+
+    bool KvTraceWanted() {
+        static const bool wanted = []() {
+            const std::filesystem::path flag = SteamRootDir() / "opensteamtool" / "trace-kv.txt";
+            std::error_code ec;
+            return std::filesystem::exists(flag, ec);
+        }();
+        return wanted;
+    }
+
+    bool PrintableArg(void* p, char* dst, size_t cap) {
+        __try {
+            const auto* s = static_cast<const char*>(p);
+            if (!s || !*s) return false;
+            size_t i = 0;
+            for (; i + 1 < cap && s[i]; ++i) {
+                const char c = s[i];
+                if (c < 0x20 || c > 0x7e) return false;
+                dst[i] = c;
+            }
+            dst[i] = 0;
+            return i > 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void* __fastcall hkKvFindFmt(void* parent, const char* fmt, bool create,
+                                 void* out, void* a4, void* a5) {
+        void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
+        if (fmt && (std::strstr(fmt, "manifests") || std::strstr(fmt, "branches") ||
+                    std::strstr(fmt, "betakey"))) {
+            char a4s[80] = {};
+            char a5s[80] = {};
+            const bool a4ok = PrintableArg(a4, a4s, sizeof(a4s));
+            const bool a5ok = PrintableArg(a5, a5s, sizeof(a5s));
+            LOG_MANIFEST_INFO("KVFIND \"{}\" create={} -> {} a4={} a5={}",
+                fmt, create ? 1 : 0, result ? "hit" : "MISS",
+                a4ok ? a4s : std::format("0x{:X}", reinterpret_cast<uintptr_t>(a4)),
+                a5ok ? a5s : std::format("0x{:X}", reinterpret_cast<uintptr_t>(a5)));
+        }
+        return result;
+    }
+
+    void InstallKvTrace() {
+        if (!KvTraceWanted()) return;
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) {
+            LOG_MANIFEST_WARN("KVFIND: steamclient64.dll not loaded");
+            return;
+        }
+        // build 1794536281: sub_138D9EBF0, prologue verified below
+        static const uint8_t kPrologue[] = {0x48, 0x8B, 0xC4, 0x4C, 0x89, 0x48, 0x20,
+                                            0x57, 0x48, 0x81, 0xEC};
+        uint8_t* target = module + 0xD9EBF0;
+        if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
+            LOG_MANIFEST_WARN("KVFIND: prologue mismatch at steamclient+0x{:X}, hook skipped", 0xD9EBF0u);
+            return;
+        }
+        oKvFindFmt = reinterpret_cast<KvFindFmt_t>(target);
+        if (!OSTPlatform::Detour::Attach(reinterpret_cast<void**>(&oKvFindFmt),
+                                         reinterpret_cast<void*>(hkKvFindFmt))) {
+            LOG_MANIFEST_WARN("KVFIND: detour attach failed");
+            return;
+        }
+        g_kvTraceInstalled.store(true);
+        LOG_MANIFEST_INFO("KVFIND: hooked steamclient+0x{:X} (formatted KeyValues lookup)", 0xD9EBF0u);
     }
 
     // Steam's update job decides what to download from the target depot manifests
@@ -435,6 +517,7 @@ namespace {
 namespace Hooks_Manifest {
 
     void Install() {
+        InstallKvTrace();
         HOOK_BEGIN();
         INSTALL_HOOK_C(BuildDepotDependency);
         INSTALL_HOOK_C(YldLoadDepotManifest);
