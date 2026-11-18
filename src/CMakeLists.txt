@@ -106,6 +106,7 @@ add_library(OpenSteamTool SHARED
     Utils/Tickets/LegacyCDKey.cpp
     Utils/Tickets/EticketClient.cpp
     Utils/Config/Config.cpp
+Utils/SteamConfig/AppInfoFile.cpp
     Utils/Config/ConfigFileWatcher.cpp
     Utils/Config/LuaConfig.cpp
     Utils/Config/LuaFileWatcher.cpp

@@ -46,6 +46,9 @@ namespace Config {
     CloudSettings GetCloudSettings();
     bool GetStatsEnableApi();
     bool GetUpdateEnabled();
+    bool GetManifestAnswerBetaFallback();
+    bool GetManifestInjectBranchManifests();
+    bool GetManifestSwitchBranchViaClient();
 
     // [donate] — contribute manifest request codes for depots this account owns.
     struct DonateSettings {
@@ -82,6 +85,28 @@ namespace Config {
 
     // [update] - self-update check on startup (staged for next Steam launch).
     inline bool updateEnabled = true;
+
+    // [manifest] answer_beta_fallback — when Steam reports that it cannot resolve
+    // a selected test branch (it does that for every app the account does not
+    // own, even though it has the branch key in memory), replace the fallback's
+    // depot gids and build id with the branch's real ones from appinfo.vdf and
+    // clear the flag. Without it the client rewrites the appmanifest without the
+    // betakey and the selection is lost on the next start.
+    inline bool manifestAnswerBetaFallback = true;
+
+    // [manifest] inject_branch_manifests — materialise the selected branch's
+    // depots/<depot>/manifests/<branch>/{gid,size} entries inside the client's
+    // in-memory appinfo KeyValues. Steam rejects a branch wholesale ("missing
+    // manifests for beta") when those entries are absent, even though its own
+    // appinfo cache on disk carries them.
+    inline bool manifestInjectBranchManifests = false;
+
+    // [manifest] switch_branch_via_client — apply a branch change through the
+    // client's own CUserAppManager branch setter so the normal
+    // "beta changed" -> user config change -> scheduler -> download path runs.
+    // Editing appmanifest_<appid>.acf while Steam is closed only reaches the
+    // load path, which never queues an update.
+    inline bool manifestSwitchBranchViaClient = false;
 
     // [donate] - mint manifest request codes on request for depots this account
     // owns. Codes are bound to (depot, manifest) and rotate within minutes, so

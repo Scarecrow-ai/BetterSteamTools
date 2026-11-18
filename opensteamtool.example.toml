@@ -8,6 +8,34 @@
 level = "debug"
 
 [manifest]
+# Answer Steam's "beta fallback" for apps that are on a test branch.
+#
+# For an app the account does not own, Steam reports a beta fallback on every
+# BuildDepotDependency call even though it already has the selected branch in
+# memory ("BetaKey" in the app config KeyValues). Handling that report as final
+# makes the client rewrite the appmanifest without the betakey, so the branch is
+# lost on the next start and the app rolls back to the public build.
+#
+# With this on, OpenSteamTool replaces the fallback's depot gids and build id
+# with the branch's own values from appcache/appinfo.vdf and clears the flag, so
+# Steam keeps the selection, mounts the branch build and can switch branches from
+# the Betas dialog. Set to false to leave the fallback entirely to Steam.
+answer_beta_fallback = true
+
+# Materialise the selected branch's depot entries inside the client's in-memory
+# appinfo KeyValues (depots/<depot>/manifests/<branch>/{gid,size}). Steam rejects
+# a branch wholesale -- "missing manifests for beta ... falling back to public" --
+# when those entries are absent, even though its own appinfo cache on disk has
+# them. Needs answer_beta_fallback to stay out of the way; leave this on and set
+# answer_beta_fallback = false for the branch path to run natively.
+inject_branch_manifests = false
+
+# Apply a branch change through the client's own branch setter, which is what the
+# Betas dialog ends up in: it writes BetaKey, emits "beta changed", and lets the
+# normal user-config-change -> scheduler -> download path run. Editing the
+# appmanifest while Steam is closed never queues an update.
+switch_branch_via_client = false
+
 # Which upstream API to query for depot manifest request codes.
 #   "opensteamtool" → https://manifest.opensteamtool.com/{gid}   (default)
 #   "wudrm"         → http://gmrc.wudrm.com/manifest/{gid} (recommended for China users)

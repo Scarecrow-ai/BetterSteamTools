@@ -19,6 +19,9 @@ namespace {
         std::vector<std::string> remoteUrlTemplates;
         bool statsEnableApi = true;
         bool updateEnabled = true;
+        bool manifestAnswerBetaFallback = true;
+        bool manifestInjectBranchManifests = false;
+        bool manifestSwitchBranchViaClient = false;
         DonateSettings donate;
         std::vector<InjectDll> injectDlls;
         CloudSettings cloud;
@@ -56,6 +59,9 @@ namespace {
         remoteUrlTemplates     = snapshot.remoteUrlTemplates;
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
+manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
+        manifestInjectBranchManifests = snapshot.manifestInjectBranchManifests;
+        manifestSwitchBranchViaClient = snapshot.manifestSwitchBranchViaClient;
         donate                 = snapshot.donate;
         injectDlls             = snapshot.injectDlls;
         cloudEnabled           = snapshot.cloud.enabled;
@@ -112,6 +118,12 @@ namespace {
                     snapshot.manifestTimeouts.send = static_cast<uint32_t>(*val);
                 if (auto val = (*manifest)["timeout_recv_ms"].value<int64_t>())
                     snapshot.manifestTimeouts.recv = static_cast<uint32_t>(*val);
+                if (auto val = (*manifest)["answer_beta_fallback"].value<bool>())
+                    snapshot.manifestAnswerBetaFallback = *val;
+                if (auto val = (*manifest)["inject_branch_manifests"].value<bool>())
+                    snapshot.manifestInjectBranchManifests = *val;
+                if (auto val = (*manifest)["switch_branch_via_client"].value<bool>())
+                    snapshot.manifestSwitchBranchViaClient = *val;
             }
 
             // [log]
@@ -292,6 +304,21 @@ namespace {
     DonateSettings GetDonateSettings() {
         std::lock_guard lock(g_mutex);
         return donate;
+    }
+
+    bool GetManifestAnswerBetaFallback() {
+        std::lock_guard lock(g_mutex);
+        return manifestAnswerBetaFallback;
+    }
+
+    bool GetManifestInjectBranchManifests() {
+        std::lock_guard lock(g_mutex);
+        return manifestInjectBranchManifests;
+    }
+
+    bool GetManifestSwitchBranchViaClient() {
+        std::lock_guard lock(g_mutex);
+        return manifestSwitchBranchViaClient;
     }
 
     bool GetUpdateEnabled() {
