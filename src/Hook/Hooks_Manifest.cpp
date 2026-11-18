@@ -219,6 +219,7 @@ namespace {
 
     std::vector<std::pair<AppId_t, std::string>> PinnedSources();
     std::string PinnedSourceFor(AppId_t appId);
+    bool SwapPublicManifestTable(AppId_t appId, const std::string& sourceBranch, bool install);
     bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
 
 
@@ -583,6 +584,46 @@ namespace {
         }
     }
 
+
+    // The client populates an unknown branch by copying the public manifest table
+    // (same behaviour as the reference tool, which copies manifests/public into
+    // manifests/Pinned). Swap those few values for the pinned branch's real ones
+    // just before the switch, then put the public values back.
+    bool SwapPublicManifestTable(AppId_t appId, const std::string& sourceBranch, bool install) {
+        void* appKv = FindAppKv(appId);
+        if (!appKv || !oKvFindFmt) return false;
+        AppInfoFile::Refresh(SteamRootDir().string());
+        const auto from = AppInfoFile::Lookup(appId, install ? "public" : sourceBranch);
+        const auto to = AppInfoFile::Lookup(appId, install ? sourceBranch : "public");
+        if (from.empty() || to.empty()) return false;
+        fnKvSetString = reinterpret_cast<KvSetString_t>(
+            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0290);
+        if (!fnKvSetString) return false;
+        bool any = false;
+        for (const auto& src : from) {
+            const auto it = std::find_if(to.begin(), to.end(),
+                [&](const AppInfoFile::BranchDepot& d) { return d.depotId == src.depotId; });
+            if (it == to.end()) continue;
+            for (int which = 0; which < 2; ++which) {
+                const char* key = which == 0 ? "gid" : "size";
+                const uint64_t value = which == 0 ? it->gid : it->size;
+                for (const char* prefix : {"", "depots/"}) {
+                    const std::string path = std::format("{}{}/manifests/public/{}", prefix, src.depotId, key);
+                    void* node = oKvFindFmt(appKv, path.c_str(), true, nullptr, nullptr, nullptr);
+                    if (!node) continue;
+                    char buf[32] = {};
+                    std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(value));
+                    fnKvSetString(node, buf);
+                    any = true;
+                }
+            }
+            LOG_MANIFEST_INFO("BETA-SWAP: app {} depot {} manifests/public <- {} {}",
+                              appId, src.depotId,
+                              install ? sourceBranch : "public", install ? "(pinned values)" : "(restored)");
+        }
+        return any;
+    }
+
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
     // depot config, so a branch whose per-depot manifest entries are absent from
@@ -649,7 +690,12 @@ namespace {
                 return;
             }
             EnsureBetahashValue(appId, "Pinned");
+            SwapPublicManifestTable(appId, source, true);
             const bool pinnedOk = fnSetBetaBranch(self, appId, "Pinned");
+            std::thread([appId, source]() {
+                std::this_thread::sleep_for(std::chrono::seconds(8));
+                SwapPublicManifestTable(appId, source, false);
+            }).detach();
             LOG_MANIFEST_INFO("BETA-PIN: app {} switched to Pinned (source \"{}\") ok={}",
                               appId, source, pinnedOk);
             return;
