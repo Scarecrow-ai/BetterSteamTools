@@ -172,7 +172,9 @@ namespace {
                                  void* out, void* a4, void* a5) {
         void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
         if (fmt && (std::strstr(fmt, "manifests") || std::strstr(fmt, "branches") ||
-                    std::strstr(fmt, "betakey"))) {
+                    std::strstr(fmt, "betakey") || std::strstr(fmt, "-prev_open_beta") ||
+                    std::strstr(fmt, "Pinned") || std::strstr(fmt, "open-beta") ||
+                    std::strstr(fmt, "testing-branch"))) {
             char a4s[80] = {};
             char a5s[80] = {};
             const bool a4ok = PrintableArg(a4, a4s, sizeof(a4s));
