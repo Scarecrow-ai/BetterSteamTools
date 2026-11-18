@@ -298,6 +298,8 @@ namespace {
     std::string SelectedBranchFromManifest(AppId_t appId);
 
 
+    bool EnsureBetahashValue(AppId_t appId, const std::string& branch);
+
     // ── register the selected branch the way the client itself does ──────
     // sub_1384F5DD0 enumerates HKCU\Software\Valve\Steam\Apps\<appid> and keeps
     // only values named "betahash_<branch>"; the branch name comes from that
@@ -441,6 +443,9 @@ namespace {
                               appId, branch);
             return;
         }
+        // The client only considers branches whose betahash_ value exists, and it
+        // writes that value itself when a beta is joined for real.
+        EnsureBetahashValue(appId, branch);
         const bool ok = fnSetBetaBranch(self, appId, branch.c_str());
         LOG_MANIFEST_INFO("BETA-SET: called the client branch setter for app {} -> \"{}\" (ok={})",
                           appId, branch, ok);
