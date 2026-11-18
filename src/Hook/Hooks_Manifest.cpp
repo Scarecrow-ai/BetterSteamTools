@@ -374,6 +374,44 @@ namespace {
         }
     }
 
+
+    // 0x561CC0 answers "what is the state of this app's beta token", and the
+    // update job treats 5 (invalid password) as unusable and rewrites the betakey
+    // to public. The token lives on Steam's backend, so a synthetic branch can
+    // never obtain one; the reference tool answers the server response itself.
+    using BetaToken_t = int(__fastcall*)(void* self, AppId_t appId, const char* branch);
+    BetaToken_t oBetaToken = nullptr;
+
+    int __fastcall hkBetaToken(void* self, AppId_t appId, const char* branch) {
+        const int status = oBetaToken ? oBetaToken(self, appId, branch) : 0;
+        if (status == 0) return status;
+        if (!branch || !*branch) return status;
+        if (!Config::GetManifestInjectBranchManifests() && TraceBetaList().empty()) return status;
+        if (_stricmp(branch, "Pinned") == 0 && !PinnedSourceFor(appId).empty()) {
+            LOG_MANIFEST_INFO("BETA-GRANT: app {} beta token for \"Pinned\" forced valid (was {})",
+                              appId, status);
+            return 0;
+        }
+        return status;
+    }
+
+    void InstallBetaTokenGrant() {
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) return;
+        uint8_t* target = module + 0x561CC0;
+        static const uint8_t kPrologue[] = {0x40, 0x53, 0x57, 0x41, 0x55, 0x41, 0x56,
+                                            0x48, 0x81, 0xEC, 0x58, 0x01};
+        if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
+            LOG_MANIFEST_WARN("BETA-GRANT: prologue mismatch at +0x561CC0");
+            return;
+        }
+        oBetaToken = reinterpret_cast<BetaToken_t>(target);
+        if (OSTPlatform::Detour::Attach(reinterpret_cast<void**>(&oBetaToken),
+                                        reinterpret_cast<void*>(hkBetaToken))) {
+            LOG_MANIFEST_INFO("BETA-GRANT: hooked the beta token check (steamclient+0x561CC0)");
+        }
+    }
+
     // ── beta access grant (HubcapTools "Branches::BetaAccessCheck") ──────
     // steamclient+0x4EACE0 decides whether an app may use a beta branch by
     // reading Software\Valve\Steam\<root>\Apps\<appid>\betahash_<branch>.
@@ -1307,6 +1345,7 @@ namespace Hooks_Manifest {
         InstallKvSetTrace();
         InstallBetaAccessGrant();
         InstallBetaHashReadGrant();
+        InstallBetaTokenGrant();
         HOOK_END();
     }
 
