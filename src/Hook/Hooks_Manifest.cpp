@@ -275,6 +275,66 @@ namespace {
                           appId, branch, ok);
     }
 
+
+    // Every installed app whose manifest selects a non-public branch. This is the
+    // list the client-side switch drives, so no per-app opt-in file is needed.
+    std::vector<std::pair<AppId_t, std::string>> AppsWithTestBranch() {
+        std::vector<std::pair<AppId_t, std::string>> out;
+        const std::filesystem::path root = SteamRootDir();
+        std::vector<std::filesystem::path> dirs{root / "steamapps"};
+        std::ifstream lv(root / "steamapps" / "libraryfolders.vdf");
+        if (lv) {
+            const std::string text((std::istreambuf_iterator<char>(lv)), std::istreambuf_iterator<char>());
+            for (const auto& p : SteamConfig::AppManifestBeta::LibraryFolders(text)) {
+                dirs.emplace_back(std::filesystem::path(p) / "steamapps");
+            }
+        }
+        for (const auto& dir : dirs) {
+            std::error_code ec;
+            std::filesystem::directory_iterator it(dir, ec);
+            for (; !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+                const std::string name = it->path().filename().string();
+                if (name.rfind("appmanifest_", 0) != 0 || it->path().extension() != ".acf") continue;
+                std::ifstream in(it->path());
+                if (!in) continue;
+                const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                auto key = SteamConfig::AppManifestBeta::FindBetaKey(text, "UserConfig");
+                if (!key || key->empty() || _stricmp(key->c_str(), "public") == 0) continue;
+                AppId_t appId = 0;
+                const size_t at = text.find("\"appid\"");
+                if (at != std::string::npos) {
+                    size_t p2 = text.find('"', at + 7);
+                    if (p2 != std::string::npos) {
+                        ++p2;
+                        size_t p3 = text.find('"', p2);
+                        if (p3 != std::string::npos) appId = static_cast<AppId_t>(std::strtoul(text.substr(p2, p3 - p2).c_str(), nullptr, 10));
+                    }
+                }
+                if (appId) out.emplace_back(appId, *key);
+            }
+        }
+        return out;
+    }
+
+
+    // "appid=branch" lines: apply a branch without the Betas dialog. This is both
+    // a headless way to switch and how the client-side path is exercised in tests.
+    std::vector<std::pair<AppId_t, std::string>> DesiredBranches() {
+        std::vector<std::pair<AppId_t, std::string>> out;
+        std::ifstream in(SteamRootDir() / "opensteamtool" / "desired-branch.txt");
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const AppId_t appId = static_cast<AppId_t>(std::strtoul(line.substr(0, eq).c_str(), nullptr, 10));
+            std::string branch = line.substr(eq + 1);
+            if (appId && !branch.empty()) out.emplace_back(appId, branch);
+        }
+        return out;
+    }
+
     void StartBranchSetterThread() {
         if (!Config::GetManifestSwitchBranchViaClient() && TraceBetaList().empty()) return;
         std::thread([]() {
@@ -284,9 +344,19 @@ namespace {
                 LOG_MANIFEST_WARN("BETA-SET: never captured the app manager, skipping");
                 return;
             }
-            for (AppId_t appId : TraceBetaList()) {
-                const std::string branch = SelectedBranchFromManifest(appId);
-                if (!branch.empty()) TryCallSetBetaBranch(appId, branch);
+            const auto desired = DesiredBranches();
+            if (!desired.empty()) {
+                for (const auto& [appId, branch] : desired) TryCallSetBetaBranch(appId, branch);
+                return;
+            }
+            if (Config::GetManifestSwitchBranchViaClient()) {
+                for (const auto& [appId, branch] : AppsWithTestBranch())
+                    TryCallSetBetaBranch(appId, branch);
+            } else {
+                for (AppId_t appId : TraceBetaList()) {
+                    const std::string branch = SelectedBranchFromManifest(appId);
+                    if (!branch.empty()) TryCallSetBetaBranch(appId, branch);
+                }
             }
         }).detach();
     }
