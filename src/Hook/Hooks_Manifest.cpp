@@ -189,7 +189,13 @@ namespace {
     void* __fastcall hkKvFindFmt(void* parent, const char* fmt, bool create,
                                  void* out, void* a4, void* a5) {
         void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
-        if (fmt && (std::strstr(fmt, "manifests") || std::strstr(fmt, "branches") ||
+        bool numeric = fmt && *fmt;
+        if (numeric) {
+            for (const char* c = fmt; *c; ++c) {
+                if (*c < '0' || *c > '9') { numeric = false; break; }
+            }
+        }
+        if (fmt && (numeric || std::strstr(fmt, "manifests") || std::strstr(fmt, "branches") ||
                     std::strstr(fmt, "betakey") || std::strstr(fmt, "-prev_open_beta") ||
                     std::strstr(fmt, "Pinned") || std::strstr(fmt, "open-beta") ||
                     std::strstr(fmt, "testing-branch"))) {
@@ -197,8 +203,8 @@ namespace {
             char a5s[80] = {};
             const bool a4ok = PrintableArg(a4, a4s, sizeof(a4s));
             const bool a5ok = PrintableArg(a5, a5s, sizeof(a5s));
-            LOG_MANIFEST_INFO("KVFIND \"{}\" create={} -> {} a4={} a5={}",
-                fmt, create ? 1 : 0, result ? "hit" : "MISS",
+            LOG_MANIFEST_INFO("KVFIND parent=0x{:X} \"{}\" create={} -> {} a4={} a5={}",
+                reinterpret_cast<uintptr_t>(parent), fmt, create ? 1 : 0, result ? "hit" : "MISS",
                 a4ok ? a4s : std::format("0x{:X}", reinterpret_cast<uintptr_t>(a4)),
                 a5ok ? a5s : std::format("0x{:X}", reinterpret_cast<uintptr_t>(a5)));
         }
