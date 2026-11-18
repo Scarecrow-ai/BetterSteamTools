@@ -171,6 +171,9 @@ namespace {
     std::set<std::string> g_injected;
 
 
+    bool InjectBranchManifests(AppId_t appId, const std::string& branch,
+                               const std::vector<AppInfoFile::BranchDepot>& depots);
+
     // The branch the user selected, read from the appmanifest. The update job
     // reads the same key out of its own state KV, and it decides the beta
     // fallback before BuildDepotDependency runs, so the manifests have to be in
