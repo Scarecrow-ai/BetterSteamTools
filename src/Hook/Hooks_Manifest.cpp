@@ -802,20 +802,37 @@ namespace {
     // reads the same key out of its own state KV, and it decides the beta
     // fallback before BuildDepotDependency runs, so the manifests have to be in
     // the appinfo KV as soon as that KV exists.
+
+    // Steam writes these files while we read them; MSVC's ifstream sharing made
+    // Steam's own write fail ("Access Denied" -> update canceled), so read with
+    // full sharing instead.
+    std::string ReadTextFileShared(const std::filesystem::path& path) {
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return {};
+        std::string text;
+        char buffer[8192];
+        DWORD read = 0;
+        while (ReadFile(file, buffer, sizeof(buffer), &read, nullptr) && read > 0) {
+            text.append(buffer, read);
+        }
+        CloseHandle(file);
+        return text;
+    }
+
     std::string SelectedBranchFromManifest(AppId_t appId) {
         const std::filesystem::path root = SteamRootDir();
         std::vector<std::filesystem::path> dirs{root / "steamapps"};
-        std::ifstream lv(root / "steamapps" / "libraryfolders.vdf");
-        if (lv) {
-            const std::string text((std::istreambuf_iterator<char>(lv)), std::istreambuf_iterator<char>());
-            for (const auto& p : SteamConfig::AppManifestBeta::LibraryFolders(text)) {
+        const std::string libraryFolders = ReadTextFileShared(root / "steamapps" / "libraryfolders.vdf");
+        if (!libraryFolders.empty()) {
+            for (const auto& p : SteamConfig::AppManifestBeta::LibraryFolders(libraryFolders)) {
                 dirs.emplace_back(std::filesystem::path(p) / "steamapps");
             }
         }
         for (const auto& dir : dirs) {
-            std::ifstream in(dir / std::format("appmanifest_{}.acf", appId));
-            if (!in) continue;
-            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const std::string text = ReadTextFileShared(dir / std::format("appmanifest_{}.acf", appId));
+            if (text.empty()) continue;
             if (auto key = SteamConfig::AppManifestBeta::FindBetaKey(text, "UserConfig"); key && !key->empty())
                 return *key;
             if (auto key = SteamConfig::AppManifestBeta::FindBetaKey(text, "MountedConfig"); key && !key->empty())
