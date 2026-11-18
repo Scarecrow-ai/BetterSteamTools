@@ -7,6 +7,7 @@
 #include "Utils/SteamConfig/AppManifestBeta.h"
 #include "OSTPlatform/include/DynamicLibrary.h"
 #include <windows.h>
+#include <winreg.h>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
@@ -296,6 +297,39 @@ namespace {
 
     std::string SelectedBranchFromManifest(AppId_t appId);
 
+
+    // ── register the selected branch the way the client itself does ──────
+    // sub_1384F5DD0 enumerates HKCU\Software\Valve\Steam\Apps\<appid> and keeps
+    // only values named "betahash_<branch>"; the branch name comes from that
+    // suffix, and a branch with no such value is never considered. An app the
+    // account does not own therefore has no betas at all. Writing the value the
+    // client would have written makes its own resolution see the branch.
+    bool EnsureBetahashValue(AppId_t appId, const std::string& branch) {
+        if (!appId || branch.empty() || _stricmp(branch.c_str(), "public") == 0) return false;
+        const std::wstring subkey = std::format(L"Software\\Valve\\Steam\\Apps\\{}", appId);
+        HKEY key = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, subkey.c_str(), 0, nullptr, 0,
+                            KEY_SET_VALUE | KEY_QUERY_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+            LOG_MANIFEST_WARN("BETA-REG: cannot open HKCU\\{}", std::string(subkey.begin(), subkey.end()));
+            return false;
+        }
+        const std::wstring valueName = L"betahash_" + std::wstring(branch.begin(), branch.end());
+        wchar_t existing[8] = {};
+        DWORD size = sizeof(existing);
+        DWORD type = 0;
+        if (RegQueryValueExW(key, valueName.c_str(), nullptr, &type,
+                             reinterpret_cast<LPBYTE>(existing), &size) == ERROR_SUCCESS) {
+            RegCloseKey(key);
+            return true;
+        }
+        const char placeholder[] = "0";
+        const LONG written = RegSetValueExW(key, valueName.c_str(), 0, REG_SZ,
+                                            reinterpret_cast<const BYTE*>(placeholder), sizeof(placeholder));
+        RegCloseKey(key);
+        LOG_MANIFEST_INFO("BETA-REG: app {} branch \"{}\" registered (result={})", appId, branch, written);
+        return written == ERROR_SUCCESS;
+    }
+
     // ── beta access grant (HubcapTools "Branches::BetaAccessCheck") ──────
     // steamclient+0x4EACE0 decides whether an app may use a beta branch by
     // reading Software\Valve\Steam\<root>\Apps\<appid>\betahash_<branch>.
@@ -531,6 +565,7 @@ namespace {
         if (!Config::GetManifestInjectBranchManifests() && !TraceBeta(appId)) return;
         const std::string branch = SelectedBranchFromManifest(appId);
         if (branch.empty() || _stricmp(branch.c_str(), "public") == 0) return;
+        EnsureBetahashValue(appId, branch);
         AppInfoFile::Refresh(SteamRootDir().string());
         const auto depots = AppInfoFile::Lookup(appId, branch);
         if (depots.empty()) {
