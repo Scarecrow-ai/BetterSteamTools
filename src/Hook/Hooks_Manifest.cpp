@@ -257,7 +257,8 @@ namespace {
         // that fallback with the branch's own depot table from the appinfo cache
         // and clear the flag, so the client keeps the selection instead of
         // rewriting the manifest without it.
-        if (pbBetaFallback && *pbBetaFallback && AppId != 0) {
+        if (pbBetaFallback && *pbBetaFallback && AppId != 0 &&
+            Config::GetManifestAnswerBetaFallback()) {
             const std::string branch = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
             if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
                 AppInfoFile::Refresh(SteamRootDir().string());

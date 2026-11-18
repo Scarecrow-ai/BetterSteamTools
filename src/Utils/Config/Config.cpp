@@ -19,6 +19,7 @@ namespace {
         std::vector<std::string> remoteUrlTemplates;
         bool statsEnableApi = true;
         bool updateEnabled = true;
+        bool manifestAnswerBetaFallback = true;
         DonateSettings donate;
         std::vector<InjectDll> injectDlls;
         CloudSettings cloud;
@@ -56,6 +57,7 @@ namespace {
         remoteUrlTemplates     = snapshot.remoteUrlTemplates;
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
+manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
         donate                 = snapshot.donate;
         injectDlls             = snapshot.injectDlls;
         cloudEnabled           = snapshot.cloud.enabled;
@@ -112,6 +114,8 @@ namespace {
                     snapshot.manifestTimeouts.send = static_cast<uint32_t>(*val);
                 if (auto val = (*manifest)["timeout_recv_ms"].value<int64_t>())
                     snapshot.manifestTimeouts.recv = static_cast<uint32_t>(*val);
+                if (auto val = (*manifest)["answer_beta_fallback"].value<bool>())
+                    snapshot.manifestAnswerBetaFallback = *val;
             }
 
             // [log]
@@ -294,7 +298,12 @@ namespace {
         return donate;
     }
 
-    bool GetUpdateEnabled() {
+    bool GetManifestAnswerBetaFallback() {
+    std::shared_lock lock(g_mutex);
+    return manifestAnswerBetaFallback;
+}
+
+bool GetUpdateEnabled() {
         std::lock_guard lock(g_mutex);
         return updateEnabled;
     }
