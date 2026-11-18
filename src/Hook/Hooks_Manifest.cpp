@@ -10,6 +10,7 @@
 #include <winreg.h>
 #include <atomic>
 #include <cstring>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include "OSTPlatform/include/Dialog.h"
@@ -130,18 +131,30 @@ namespace {
     // Branch the client believes is selected, straight out of the KV it hands to
     // BuildDepotDependency. Measured: the KV carries BetaKey even while the call
     // reports a fallback, so this is the request to honour.
+    // The appmanifest keeps the selection nested (UserConfig/BetaKey,
+    // MountedConfig/BetaKey), so a shallow scan always came back empty and the
+    // depot answer never fired.
     std::string BranchFromUserConfig(KeyValues* root) {
         auto* sys = TraceKvSystem();
         if (!sys || !root) return {};
-        for (KeyValues* child = root->m_pSub; child; child = child->m_pPeer) {
-            char name[64] = {};
-            if (!SafeCopy(sys->GetStringForSymbol(child->m_iKeyName), name, sizeof(name))) continue;
-            if (_stricmp(name, "betakey") != 0) continue;
-            if (child->m_iDataType != 1) continue;
-            char value[128] = {};
-            if (SafeCopy(child->m_sValue, value, sizeof(value)) && value[0]) return value;
-        }
-        return {};
+        std::string found;
+        std::function<void(KeyValues*, int)> scan = [&](KeyValues* node, int depth) {
+            if (!found.empty()) return;
+            for (KeyValues* child = node->m_pSub; child; child = child->m_pPeer) {
+                char name[64] = {};
+                if (!SafeCopy(sys->GetStringForSymbol(child->m_iKeyName), name, sizeof(name))) continue;
+                if (_stricmp(name, "betakey") == 0 && child->m_iDataType == 1) {
+                    char value[128] = {};
+                    if (SafeCopy(child->m_sValue, value, sizeof(value)) && value[0]) {
+                        found = value;
+                        return;
+                    }
+                }
+                if (depth > 0 && child->m_pSub) scan(child, depth - 1);
+            }
+        };
+        scan(root, 2);
+        return found;
     }
 
 
