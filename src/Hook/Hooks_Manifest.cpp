@@ -150,7 +150,9 @@ namespace {
                         return;
                     }
                 }
-                if (depth > 0 && child->m_pSub) scan(child, depth - 1);
+                // m_pSub is only a child pointer for section nodes; on value
+                // nodes it aliases the value itself, and following it crashes.
+                if (depth > 0 && child->m_iDataType == 0 && child->m_pSub) scan(child, depth - 1);
             }
         };
         scan(root, 2);
