@@ -215,6 +215,26 @@ namespace {
         InjectBranchManifests(appId, branch, depots);
     }
 
+
+    // Find which app a captured appinfo KV node belongs to.
+    AppId_t AppIdForKv(void* kv) {
+        std::lock_guard<std::mutex> lock(g_appKvMutex);
+        for (const auto& [id, node] : g_appKv) {
+            if (node == kv) return id;
+        }
+        return 0;
+    }
+
+
+    bool startsWithTrackedBranch(const char* name, size_t len) {
+        if (len == 6 && std::memcmp(name, "public", 6) == 0) return false;
+        for (size_t i = 0; i < len; ++i) {
+            const char c = name[i];
+            if (c == '%' || c == ' ') return false;      // still a format string
+        }
+        return len > 0;
+    }
+
     void RememberAppKv(const char* key, void* kv) {
         if (!key || !kv) return;
         AppId_t appId = 0;
@@ -315,8 +335,39 @@ namespace {
 
     void* __fastcall hkKvFindFmt(void* parent, const char* fmt, bool create,
                                  void* out, void* a4, void* a5) {
+        // The client resolves a branch by building "branches/<name>/..." paths on
+        // the app's appinfo KV; materialise that branch's depot manifests right
+        // before it looks them up, which is the one moment early enough for the
+        // update job's missing-manifest count.
+        if (fmt && !create && parent && std::strncmp(fmt, "branches/", 9) == 0) {
+            const AppId_t appId = AppIdForKv(parent);
+            if (appId != 0) {
+                const char* start = fmt + 9;
+                const char* slash = std::strchr(start, '/');
+                if (slash && slash > start && startsWithTrackedBranch(start, static_cast<size_t>(slash - start))) {
+                    const std::string branch(start, static_cast<size_t>(slash - start));
+                    AppInfoFile::Refresh(SteamRootDir().string());
+                    const auto depots = AppInfoFile::Lookup(appId, branch);
+                    if (!depots.empty()) {
+                        LOG_MANIFEST_INFO("BETA-INJECT app {} branch \"{}\" (at branch resolution)", appId, branch);
+                        InjectBranchManifests(appId, branch, depots);
+                    }
+                }
+            }
+        }
         void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
         if (create && result) RememberAppKv(fmt, result);
+        if (!create && result && fmt && (std::strcmp(fmt, "betakey") == 0 ||
+                                         std::strcmp(fmt, "BetaKey") == 0)) {
+            auto* node = static_cast<KeyValues*>(result);
+            char value[96] = {};
+            const bool ok = node->m_iDataType == 1 && SafeCopy(node->m_sValue, value, sizeof(value));
+            LOG_MANIFEST_INFO("BETA-KEY read parent=0x{:X} \"{}\" type={} value={}",
+                              reinterpret_cast<uintptr_t>(parent), fmt,
+                              static_cast<int>(node->m_iDataType),
+                              ok ? value : std::format("raw=0x{:X}",
+                                  reinterpret_cast<uintptr_t>(node->m_sValue)));
+        }
         bool numeric = fmt && *fmt;
         if (numeric) {
             for (const char* c = fmt; *c; ++c) {
