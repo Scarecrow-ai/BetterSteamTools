@@ -421,6 +421,26 @@ namespace {
         // The switch only sticks if the branch is resolvable at that moment: the
         // client validates the new branch right away and otherwise keeps the one
         // it already had.
+        // "Pinned" is our own branch: it has no appinfo row, it was built by
+        // InjectPinnedBranch from the recorded source branch.
+        if (_stricmp(branch.c_str(), "Pinned") == 0) {
+            const std::string source = PinnedSourceFor(appId);
+            if (source.empty()) {
+                LOG_MANIFEST_WARN("BETA-PIN: app {} has no pin.txt source, not switching", appId);
+                return;
+            }
+            for (int i = 0; i < 40 && !FindAppKv(appId); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            if (!InjectPinnedBranch(appId, source)) {
+                LOG_MANIFEST_WARN("BETA-PIN: app {} could not build Pinned from \"{}\"", appId, source);
+                return;
+            }
+            EnsureBetahashValue(appId, "Pinned");
+            const bool pinnedOk = fnSetBetaBranch(self, appId, "Pinned");
+            LOG_MANIFEST_INFO("BETA-PIN: app {} switched to Pinned (source \"{}\") ok={}",
+                              appId, source, pinnedOk);
+            return;
+        }
         bool injected = false;
         for (int i = 0; i < 40 && !injected; ++i) {
             if (!FindAppKv(appId)) {
