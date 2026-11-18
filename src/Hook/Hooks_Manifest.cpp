@@ -131,6 +131,24 @@ namespace {
     }
 
 
+
+    // ── appinfo path reads (debug only) ─────────────────────────────────
+    // The depot/manifest tables are read through CAppInfoCache::GetAppDataFromAppInfo
+    // with a path string like "3450311/manifests/<branch>/gid". Logging the paths
+    // shows which branch manifests the client actually asks for.
+    HOOK_FUNC(GetAppDataFromAppInfo, int64, void* pCache, AppId_t appId,
+              const char* path, uint8* out, int32 outSize) {
+        const int64 result = oGetAppDataFromAppInfo(pCache, appId, path, out, outSize);
+        if (path && (std::strstr(path, "manifests") || std::strstr(path, "branches") ||
+                     std::strstr(path, "-prev_open_beta"))) {
+            LOG_MANIFEST_INFO("APPINFO app={} path=\"{}\" -> {} size={}",
+                              appId, path, result,
+                              out ? std::string(reinterpret_cast<char*>(out),
+                                                static_cast<size_t>(outSize > 0 ? outSize : 0)) : std::string());
+        }
+        return result;
+    }
+
     // ── KV lookup trace (debug only) ────────────────────────────────────
     // steamclient reads every branch field through one formatted KeyValues
     // finder: "branches/%s/buildid", "branches/%s/pwdrequired" and the
@@ -522,6 +540,7 @@ namespace Hooks_Manifest {
         HOOK_BEGIN();
         INSTALL_HOOK_C(BuildDepotDependency);
         INSTALL_HOOK_C(YldLoadDepotManifest);
+        INSTALL_HOOK_C(GetAppDataFromAppInfo);
         InstallKvTrace();          // attaches inside the same transaction
         HOOK_END();
     }
