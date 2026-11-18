@@ -855,8 +855,10 @@ namespace {
         setStr(branchNode, "description", sourceBranch.c_str());
         setInt(branchNode, "buildid", static_cast<int>(buildId));
         setInt(branchNode, "timeupdated", static_cast<int>(std::time(nullptr)));
-        setInt(branchNode, "pwdrequired", 0);
-        setInt(branchNode, "lcsrequired", 0);
+        // Empty string, not int 0: the client treats any branch that carries a
+        // pwdrequired value as a private beta and then demands a backend token.
+        setStr(branchNode, "pwdrequired", "");
+        setStr(branchNode, "lcsrequired", "");
         LOG_MANIFEST_INFO("BETA-PIN: app {} branches/Pinned <- branch \"{}\" build={}",
                           appId, sourceBranch, buildId);
 
