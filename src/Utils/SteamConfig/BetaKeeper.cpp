@@ -72,6 +72,14 @@ namespace {
     constexpr std::chrono::minutes kStandDown{5};
     constexpr std::chrono::minutes kStandDownWindow{5};
 
+    // A branch switch in the Betas dialog looks like a loss for a moment: the
+    // client rewrites the manifest with "UserConfig" but no betakey first, then
+    // writes the new branch and starts the update. Restoring during that window
+    // cancels the switch (measured: click at 11:17:06, client wrote the keyless
+    // manifest at 11:17:09, our restore of the old branch at 11:17:11 aborted it).
+    // So wait this long before treating an empty key as a lost selection.
+    constexpr std::chrono::seconds kRestoreGrace{12};
+
     std::mutex g_mutex;                                        // guards the four maps below
     std::unordered_map<AppId_t, std::string> g_pins;           // keepBeta() targets
     std::unordered_map<AppId_t, std::string> g_lastKnown;      // last non-empty betakey on disk
@@ -89,6 +97,7 @@ namespace {
     std::unordered_map<AppId_t, std::string> g_restoredValue;   // what we last wrote
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_restoreAt;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_standDownUntil;
+    std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_missingSince;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point>
                                              g_pendingFallback; // hook saw a beta fallback
     std::unordered_map<AppId_t, uint32_t>    g_repairCount;    // repairs per app this session
@@ -386,8 +395,19 @@ namespace {
             if (current) {
                 g_lastKnown[*appId] = *current;
                 g_selected[*appId]  = *current;
+                g_missingSince.erase(*appId);
             } else {
                 g_selected.erase(*appId);
+                if (g_missingSince.find(*appId) == g_missingSince.end()) {
+                    g_missingSince[*appId] = now;
+                }
+            }
+
+            // Inside the grace window a missing key may simply be a switch in
+            // progress; only a pin acts immediately.
+            bool graceOver = false;
+            if (auto missing = g_missingSince.find(*appId); missing != g_missingSince.end()) {
+                graceOver = (now - missing->second) >= kRestoreGrace;
             }
 
             // Capture the branch's build at the only moment it is unambiguous:
@@ -420,7 +440,11 @@ namespace {
             }
 
             const auto pending = g_pendingFallback.find(*appId);
-            if (pending != g_pendingFallback.end()) {
+            if (!pinned && !graceOver) {
+                // Waiting for a possible switch to finish: do not touch the file.
+                wanted.clear();
+                reason = nullptr;
+            } else if (pending != g_pendingFallback.end()) {
                 if (std::chrono::steady_clock::now() > pending->second) {
                     g_pendingFallback.erase(pending);          // stale, drop it
                 } else if (!userKey) {
@@ -456,8 +480,10 @@ namespace {
 
             // No fallback flagged, but steamclient is loading manifests for a
             // test branch right now while UserConfig has lost the key — it is
-            // rewriting its app config from scratch. Put the selection back.
-            if (wanted.empty() && !userKey) {
+            // rewriting its app config from scratch. Put the selection back, but
+            // only once the grace window has passed: inside it the missing key is
+            // most likely a switch the user just started.
+            if (wanted.empty() && !userKey && (graceOver || pinned)) {
                 const auto active = g_activeBranch.find(*appId);
                 if (active != g_activeBranch.end() && !active->second.empty()) {
                     wanted = active->second;
