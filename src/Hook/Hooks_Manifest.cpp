@@ -4,6 +4,7 @@
 #include "OSTPlatform/include/Thread.h"
 #include "Utils/SteamMetadata/ManifestCache.h"
 #include "Utils/SteamConfig/AppInfoFile.h"
+#include "Utils/SteamConfig/AppManifestBeta.h"
 #include "OSTPlatform/include/DynamicLibrary.h"
 #include <windows.h>
 #include <atomic>
@@ -169,6 +170,48 @@ namespace {
     std::unordered_map<AppId_t, void*> g_appKv;
     std::set<std::string> g_injected;
 
+
+    // The branch the user selected, read from the appmanifest. The update job
+    // reads the same key out of its own state KV, and it decides the beta
+    // fallback before BuildDepotDependency runs, so the manifests have to be in
+    // the appinfo KV as soon as that KV exists.
+    std::string SelectedBranchFromManifest(AppId_t appId) {
+        const std::filesystem::path root = SteamRootDir();
+        std::vector<std::filesystem::path> dirs{root / "steamapps"};
+        std::ifstream lv(root / "steamapps" / "libraryfolders.vdf");
+        if (lv) {
+            const std::string text((std::istreambuf_iterator<char>(lv)), std::istreambuf_iterator<char>());
+            for (const auto& p : SteamConfig::AppManifestBeta::LibraryFolders(text)) {
+                dirs.emplace_back(std::filesystem::path(p) / "steamapps");
+            }
+        }
+        for (const auto& dir : dirs) {
+            std::ifstream in(dir / std::format("appmanifest_{}.acf", appId));
+            if (!in) continue;
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (auto key = SteamConfig::AppManifestBeta::FindBetaKey(text, "UserConfig"); key && !key->empty())
+                return *key;
+            if (auto key = SteamConfig::AppManifestBeta::FindBetaKey(text, "MountedConfig"); key && !key->empty())
+                return *key;
+        }
+        return {};
+    }
+
+    void InjectForKnownApp(AppId_t appId) {
+        if (!TraceBeta(appId)) return;
+        const std::string branch = SelectedBranchFromManifest(appId);
+        if (branch.empty() || _stricmp(branch.c_str(), "public") == 0) return;
+        AppInfoFile::Refresh(SteamRootDir().string());
+        const auto depots = AppInfoFile::Lookup(appId, branch);
+        if (depots.empty()) {
+            LOG_MANIFEST_WARN("BETA-INJECT app {} branch \"{}\" has no depot table in appinfo", appId, branch);
+            return;
+        }
+        LOG_MANIFEST_INFO("BETA-INJECT app {} branch \"{}\" depots={} (early, after appinfo KV creation)",
+                          appId, branch, depots.size());
+        InjectBranchManifests(appId, branch, depots);
+    }
+
     void RememberAppKv(const char* key, void* kv) {
         if (!key || !kv) return;
         AppId_t appId = 0;
@@ -177,8 +220,15 @@ namespace {
             appId = appId * 10 + static_cast<AppId_t>(*c - '0');
         }
         if (!appId) return;
-        std::lock_guard<std::mutex> lock(g_appKvMutex);
-        g_appKv[appId] = kv;
+        {
+            std::lock_guard<std::mutex> lock(g_appKvMutex);
+            g_appKv[appId] = kv;
+        }
+        // Let the cache finish populating this node before writing into it.
+        std::thread([appId]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            InjectForKnownApp(appId);
+        }).detach();
     }
 
     void* FindAppKv(AppId_t appId) {
