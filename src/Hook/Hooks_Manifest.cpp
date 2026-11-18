@@ -362,7 +362,7 @@ namespace {
         auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
         if (!module) return;
         uint8_t* target = module + 0x4EA680;
-        static const uint8_t kPrologue[] = {0x53, 0x48, 0x81, 0xEC, 0xD0, 0x01, 0x00, 0x00};
+        static const uint8_t kPrologue[] = {0x40, 0x53, 0x48, 0x81, 0xEC, 0xD0, 0x01, 0x00, 0x00};
         if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
             LOG_MANIFEST_WARN("BETA-GRANT: prologue mismatch at +0x4EA680");
             return;
