@@ -4,6 +4,7 @@
 #include "OSTPlatform/include/Thread.h"
 #include "Utils/SteamMetadata/ManifestCache.h"
 #include "OSTPlatform/include/DynamicLibrary.h"
+#include <windows.h>
 #include <filesystem>
 #include <fstream>
 #include "OSTPlatform/include/Dialog.h"
