@@ -384,6 +384,10 @@ namespace {
 
     int __fastcall hkBetaToken(void* self, AppId_t appId, const char* branch) {
         const int status = oBetaToken ? oBetaToken(self, appId, branch) : 0;
+        if (TraceBeta(appId)) {
+            LOG_MANIFEST_INFO("BETA-TOKEN: app {} branch \"{}\" status={}", appId,
+                              branch ? branch : "(null)", status);
+        }
         if (status == 0) return status;
         if (!branch || !*branch) return status;
         if (!Config::GetManifestInjectBranchManifests() && TraceBetaList().empty()) return status;
@@ -855,10 +859,9 @@ namespace {
         setStr(branchNode, "description", sourceBranch.c_str());
         setInt(branchNode, "buildid", static_cast<int>(buildId));
         setInt(branchNode, "timeupdated", static_cast<int>(std::time(nullptr)));
-        // Empty string, not int 0: the client treats any branch that carries a
-        // pwdrequired value as a private beta and then demands a backend token.
-        setStr(branchNode, "pwdrequired", "");
-        setStr(branchNode, "lcsrequired", "");
+        // The reference tool writes plain zeroes here (xor edx,edx + SetInt).
+        setInt(branchNode, "pwdrequired", 0);
+        setInt(branchNode, "lcsrequired", 0);
         LOG_MANIFEST_INFO("BETA-PIN: app {} branches/Pinned <- branch \"{}\" build={}",
                           appId, sourceBranch, buildId);
 
