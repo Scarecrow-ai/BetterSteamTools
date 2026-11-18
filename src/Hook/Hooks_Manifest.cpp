@@ -103,7 +103,8 @@ namespace {
                     LOG_MANIFEST_INFO("BETA-KV {}{} = {}", pad, name, child->m_ullValue);
                     break;
                 default:
-                    LOG_MANIFEST_INFO("BETA-KV {}{} (type {})", pad, name, child->m_iDataType);
+                    LOG_MANIFEST_INFO("BETA-KV {}{} (type {})", pad, name,
+                                      static_cast<int>(child->m_iDataType));
                     break;
             }
         }
