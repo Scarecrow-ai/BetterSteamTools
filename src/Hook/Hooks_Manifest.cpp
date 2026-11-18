@@ -3,6 +3,7 @@
 #include "dllmain.h"
 #include "OSTPlatform/include/Thread.h"
 #include "Utils/SteamMetadata/ManifestCache.h"
+#include "Utils/SteamConfig/AppInfoFile.h"
 #include "OSTPlatform/include/DynamicLibrary.h"
 #include <windows.h>
 #include <filesystem>
@@ -108,6 +109,23 @@ namespace {
                     break;
             }
         }
+    }
+
+    // Branch the client believes is selected, straight out of the KV it hands to
+    // BuildDepotDependency. Measured: the KV carries BetaKey even while the call
+    // reports a fallback, so this is the request to honour.
+    std::string BranchFromUserConfig(KeyValues* root) {
+        auto* sys = TraceKvSystem();
+        if (!sys || !root) return {};
+        for (KeyValues* child = root->m_pSub; child; child = child->m_pPeer) {
+            char name[64] = {};
+            if (!SafeCopy(sys->GetStringForSymbol(child->m_iKeyName), name, sizeof(name))) continue;
+            if (_stricmp(name, "betakey") != 0) continue;
+            if (child->m_iDataType != 1) continue;
+            char value[128] = {};
+            if (SafeCopy(child->m_sValue, value, sizeof(value)) && value[0]) return value;
+        }
+        return {};
     }
 
     // Per-fetch timeout for the on-demand pre-seed in YldLoadDepotManifest. Most
@@ -232,6 +250,53 @@ namespace {
         }
 
         if (!result) return result;
+
+        // Steam has the selected branch in memory (the KV below proves it) yet
+        // still reports a beta fallback and hands back the public build: for an
+        // app it does not own it will not resolve branch depots by itself. Answer
+        // that fallback with the branch's own depot table from the appinfo cache
+        // and clear the flag, so the client keeps the selection instead of
+        // rewriting the manifest without it.
+        if (pbBetaFallback && *pbBetaFallback && AppId != 0) {
+            const std::string branch = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
+            if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
+                AppInfoFile::Refresh(SteamRootDir().string());
+                const auto branchDepots = AppInfoFile::Lookup(AppId, branch);
+                const auto branchBuild = AppInfoFile::LookupBuildId(AppId, branch);
+                if (!branchDepots.empty()) {
+                    uint32_t patched = 0;
+                    if (pDepotInfo) {
+                        for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
+                            DepotEntry& e = pDepotInfo->m_Memory.m_pMemory[i];
+                            for (const auto& d : branchDepots) {
+                                if (d.depotId != e.DepotId) continue;
+                                if (e.ManifestGid != d.gid) {
+                                    LOG_MANIFEST_INFO("BETA: app {} depot {} gid {} -> {} (branch \"{}\")",
+                                        AppId, e.DepotId, e.ManifestGid, d.gid, branch);
+                                    e.ManifestGid = d.gid;
+                                }
+                                if (d.size != 0) e.ManifestSize = d.size;
+                                ++patched;
+                                break;
+                            }
+                        }
+                    }
+                    if (branchBuild != 0 && pBuildId && *pBuildId != static_cast<uint32>(branchBuild)) {
+                        LOG_MANIFEST_INFO("BETA: app {} build {} -> {} (branch \"{}\")",
+                            AppId, *pBuildId, branchBuild, branch);
+                        *pBuildId = static_cast<uint32>(branchBuild);
+                    }
+                    *pbBetaFallback = false;
+                    LOG_MANIFEST_INFO("BETA: app {} answered the beta fallback for branch \"{}\" "
+                                      "({} depot(s) matched, {} from appinfo)",
+                        AppId, branch, patched, branchDepots.size());
+                } else {
+                    LOG_MANIFEST_WARN("BETA: app {} requested branch \"{}\" but appinfo has no "
+                                      "depot table for it — leaving the fallback to Steam",
+                        AppId, branch);
+                }
+            }
+        }
 
         // Steam reports zero depots for an app during the window where its
         // appinfo is being swapped in by a PICS refresh — the old depot set is
