@@ -65,6 +65,13 @@ namespace {
     // after it) and therefore must not be captured as the branch's own build.
     constexpr std::chrono::minutes kFallbackCaptureGuard{15};
 
+    // A repair must not fight the user: when Steam writes a different branch
+    // shortly after we restored one (a branch switch in the UI looks exactly like
+    // a loss — the key is briefly absent), stand down for a while instead of
+    // putting the old value back.
+    constexpr std::chrono::minutes kStandDown{5};
+    constexpr std::chrono::minutes kStandDownWindow{5};
+
     std::mutex g_mutex;                                        // guards the four maps below
     std::unordered_map<AppId_t, std::string> g_pins;           // keepBeta() targets
     std::unordered_map<AppId_t, std::string> g_lastKnown;      // last non-empty betakey on disk
@@ -79,6 +86,9 @@ namespace {
     // followed by a rewrite of the depot set back to the public build, so any
     // depot change near it must not be mistaken for the branch's own build.
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_fallbackAt;
+    std::unordered_map<AppId_t, std::string> g_restoredValue;   // what we last wrote
+    std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_restoreAt;
+    std::unordered_map<AppId_t, std::chrono::steady_clock::time_point> g_standDownUntil;
     std::unordered_map<AppId_t, std::chrono::steady_clock::time_point>
                                              g_pendingFallback; // hook saw a beta fallback
     std::unordered_map<AppId_t, uint32_t>    g_repairCount;    // repairs per app this session
@@ -331,6 +341,24 @@ namespace {
         const auto installedDepots = FindInstalledDepots(*text);
         {
             std::lock_guard<std::mutex> lock(g_mutex);
+            const auto now = std::chrono::steady_clock::now();
+
+            // If the manifest now carries a branch we did not write, Steam (or the
+            // user, through the Betas dialog) chose it. Do not put our value back:
+            // stand down for a while so a switch is never cancelled.
+            if (current) {
+                const auto restored = g_restoredValue.find(*appId);
+                if (restored != g_restoredValue.end() && *current != restored->second) {
+                    const auto at = g_restoreAt.find(*appId);
+                    if (at != g_restoreAt.end() && now - at->second < kStandDownWindow) {
+                        g_standDownUntil[*appId] = now + kStandDown;
+                        LOG_BETA_INFO("app {}: Steam set branch \"{}\" (we had restored \"{}\") — "
+                                      "standing down", *appId, *current, restored->second);
+                    }
+                    g_restoredValue.erase(restored);
+                    g_restoreAt.erase(*appId);
+                }
+            }
 
             // Did Steam change the installed depot set since the previous pass?
             bool depotsChanged = false;
@@ -401,8 +429,17 @@ namespace {
                     // the branch, which is the best evidence of the selection.
                     g_pendingFallback.erase(pending);
                     if (!pinned) {
+                        // The branch Steam is loading right now beats any value we
+                        // remember: during a UI switch our last-known value is the
+                        // branch being left, and restoring it would cancel the
+                        // switch the user just made.
+                        const auto active = g_activeBranch.find(*appId);
                         const auto last = g_lastKnown.find(*appId);
-                        if (last != g_lastKnown.end()) {
+                        if (active != g_activeBranch.end() && !active->second.empty()) {
+                            wanted = active->second;
+                            reason = "Steam fell back to public (active branch)";
+                            fallbackReason = true;
+                        } else if (last != g_lastKnown.end()) {
                             wanted = last->second;
                             reason = "Steam fell back to public";
                             fallbackReason = true;
@@ -427,6 +464,21 @@ namespace {
                     reason = "Steam is running that branch";
                 }
             }
+
+            // Standing down after Steam overrode a restore: leave the file alone
+            // until the window expires (a pin always wins).
+            if (!wanted.empty() && !pinned) {
+                const auto down = g_standDownUntil.find(*appId);
+                if (down != g_standDownUntil.end()) {
+                    if (now < down->second) {
+                        LOG_BETA_TRACE("app {}: standing down, not restoring {}", *appId, wanted);
+                        wanted.clear();
+                        reason = nullptr;
+                    } else {
+                        g_standDownUntil.erase(down);
+                    }
+                }
+            }
         }
 
         if (wanted.empty()) {
@@ -449,6 +501,12 @@ namespace {
             }
             action.retry = true;
             return action;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_restoredValue[*appId] = wanted;
+            g_restoreAt[*appId] = std::chrono::steady_clock::now();
         }
 
         std::string had;
