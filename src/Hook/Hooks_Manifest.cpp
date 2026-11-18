@@ -294,6 +294,8 @@ namespace {
     }
 
 
+    std::string SelectedBranchFromManifest(AppId_t appId);
+
     // ── beta access grant (HubcapTools "Branches::BetaAccessCheck") ──────
     // steamclient+0x4EACE0 decides whether an app may use a beta branch by
     // reading Software\Valve\Steam\<root>\Apps\<appid>\betahash_<branch>.
