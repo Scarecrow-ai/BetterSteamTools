@@ -301,90 +301,6 @@ namespace {
     bool EnsureBetahashValue(AppId_t appId, const std::string& branch);
 
 
-    // ── synthetic "Pinned" branch, the way the reference tool does it ────
-    // branches/Pinned mirrors the selected beta (buildid, description, no
-    // password and no local-content-server requirement) and every depot gets
-    // depots/<depot>/manifests/Pinned with that beta's real gid/size. The client
-    // then treats Pinned as an ordinary branch that the account is subscribed to
-    // (betahash_Pinned), so its own config change / scheduler / download path
-    // runs instead of the public fallback.
-    std::vector<std::pair<AppId_t, std::string>> PinnedSources() {
-        std::vector<std::pair<AppId_t, std::string>> out;
-        std::ifstream in(SteamRootDir() / "opensteamtool" / "pin.txt");
-        std::string line;
-        while (std::getline(in, line)) {
-            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-            if (line.empty() || line[0] == '#') continue;
-            const size_t eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            const AppId_t appId = static_cast<AppId_t>(std::strtoul(line.substr(0, eq).c_str(), nullptr, 10));
-            const std::string branch = line.substr(eq + 1);
-            if (appId && !branch.empty()) out.emplace_back(appId, branch);
-        }
-        return out;
-    }
-
-    std::string PinnedSourceFor(AppId_t appId) {
-        for (const auto& [id, branch] : PinnedSources()) {
-            if (id == appId) return branch;
-        }
-        return {};
-    }
-
-    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch) {
-        void* appKv = FindAppKv(appId);
-        if (!appKv || !oKvFindFmt) return false;
-        AppInfoFile::Refresh(SteamRootDir().string());
-        const auto depots = AppInfoFile::Lookup(appId, sourceBranch);
-        const auto buildId = AppInfoFile::LookupBuildId(appId, sourceBranch);
-        if (depots.empty()) return false;
-        fnKvSetString = reinterpret_cast<KvSetString_t>(
-            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0290);
-        fnKvSetInt = reinterpret_cast<KvSetInt_t>(
-            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0250);
-        if (!fnKvSetString || !fnKvSetInt) return false;
-
-        void* branchNode = oKvFindFmt(appKv, "branches/Pinned", true, nullptr, nullptr, nullptr);
-        if (!branchNode) return false;
-        auto setStr = [](void* parent, const char* key, const char* value) {
-            void* node = oKvFindFmt(parent, key, true, nullptr, nullptr, nullptr);
-            if (node) fnKvSetString(node, value);
-        };
-        auto setInt = [](void* parent, const char* key, int value) {
-            void* node = oKvFindFmt(parent, key, true, nullptr, nullptr, nullptr);
-            if (node) fnKvSetInt(node, value);
-        };
-        setStr(branchNode, "description", sourceBranch.c_str());
-        setInt(branchNode, "buildid", static_cast<int>(buildId));
-        setInt(branchNode, "timeupdated", static_cast<int>(std::time(nullptr)));
-        setInt(branchNode, "pwdrequired", 0);
-        setInt(branchNode, "lcsrequired", 0);
-        LOG_MANIFEST_INFO("BETA-PIN: app {} branches/Pinned <- branch \"{}\" build={}",
-                          appId, sourceBranch, buildId);
-
-        bool any = false;
-        for (const auto& depot : depots) {
-            if (!depot.depotId) continue;
-            const std::string gidPath = std::format("depots/{}/manifests/Pinned/gid", depot.depotId);
-            const std::string sizePath = std::format("depots/{}/manifests/Pinned/size", depot.depotId);
-            void* gidNode = oKvFindFmt(appKv, gidPath.c_str(), true, nullptr, nullptr, nullptr);
-            void* sizeNode = oKvFindFmt(appKv, sizePath.c_str(), true, nullptr, nullptr, nullptr);
-            char buf[32] = {};
-            if (gidNode) {
-                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.gid));
-                fnKvSetString(gidNode, buf);
-            }
-            if (sizeNode) {
-                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.size));
-                fnKvSetString(sizeNode, buf);
-            }
-            LOG_MANIFEST_INFO("BETA-PIN: app {} depot {} manifests/Pinned gid={} size={}",
-                              appId, depot.depotId, depot.gid, depot.size);
-            any = any || gidNode != nullptr;
-        }
-        return any;
-    }
-
     // ── register the selected branch the way the client itself does ──────
     // sub_1384F5DD0 enumerates HKCU\Software\Valve\Steam\Apps\<appid> and keeps
     // only values named "betahash_<branch>"; the branch name comes from that
@@ -770,6 +686,90 @@ namespace {
             LOG_MANIFEST_INFO("BETA-INJECT app {} depot {} branch \"{}\" gidNode={} sizeNode={}",
                               appId, depot.depotId, branch,
                               gidNode ? "ok" : "null", sizeNode ? "ok" : "null");
+        }
+        return any;
+    }
+
+    // ── synthetic "Pinned" branch, the way the reference tool does it ────
+    // branches/Pinned mirrors the selected beta (buildid, description, no
+    // password and no local-content-server requirement) and every depot gets
+    // depots/<depot>/manifests/Pinned with that beta's real gid/size. The client
+    // then treats Pinned as an ordinary branch that the account is subscribed to
+    // (betahash_Pinned), so its own config change / scheduler / download path
+    // runs instead of the public fallback.
+    std::vector<std::pair<AppId_t, std::string>> PinnedSources() {
+        std::vector<std::pair<AppId_t, std::string>> out;
+        std::ifstream in(SteamRootDir() / "opensteamtool" / "pin.txt");
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const AppId_t appId = static_cast<AppId_t>(std::strtoul(line.substr(0, eq).c_str(), nullptr, 10));
+            const std::string branch = line.substr(eq + 1);
+            if (appId && !branch.empty()) out.emplace_back(appId, branch);
+        }
+        return out;
+    }
+
+    std::string PinnedSourceFor(AppId_t appId) {
+        for (const auto& [id, branch] : PinnedSources()) {
+            if (id == appId) return branch;
+        }
+        return {};
+    }
+
+    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch) {
+        void* appKv = FindAppKv(appId);
+        if (!appKv || !oKvFindFmt) return false;
+        AppInfoFile::Refresh(SteamRootDir().string());
+        const auto depots = AppInfoFile::Lookup(appId, sourceBranch);
+        const auto buildId = AppInfoFile::LookupBuildId(appId, sourceBranch);
+        if (depots.empty()) return false;
+        fnKvSetString = reinterpret_cast<KvSetString_t>(
+            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0290);
+        fnKvSetInt = reinterpret_cast<KvSetInt_t>(
+            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0250);
+        if (!fnKvSetString || !fnKvSetInt) return false;
+
+        void* branchNode = oKvFindFmt(appKv, "branches/Pinned", true, nullptr, nullptr, nullptr);
+        if (!branchNode) return false;
+        auto setStr = [](void* parent, const char* key, const char* value) {
+            void* node = oKvFindFmt(parent, key, true, nullptr, nullptr, nullptr);
+            if (node) fnKvSetString(node, value);
+        };
+        auto setInt = [](void* parent, const char* key, int value) {
+            void* node = oKvFindFmt(parent, key, true, nullptr, nullptr, nullptr);
+            if (node) fnKvSetInt(node, value);
+        };
+        setStr(branchNode, "description", sourceBranch.c_str());
+        setInt(branchNode, "buildid", static_cast<int>(buildId));
+        setInt(branchNode, "timeupdated", static_cast<int>(std::time(nullptr)));
+        setInt(branchNode, "pwdrequired", 0);
+        setInt(branchNode, "lcsrequired", 0);
+        LOG_MANIFEST_INFO("BETA-PIN: app {} branches/Pinned <- branch \"{}\" build={}",
+                          appId, sourceBranch, buildId);
+
+        bool any = false;
+        for (const auto& depot : depots) {
+            if (!depot.depotId) continue;
+            const std::string gidPath = std::format("depots/{}/manifests/Pinned/gid", depot.depotId);
+            const std::string sizePath = std::format("depots/{}/manifests/Pinned/size", depot.depotId);
+            void* gidNode = oKvFindFmt(appKv, gidPath.c_str(), true, nullptr, nullptr, nullptr);
+            void* sizeNode = oKvFindFmt(appKv, sizePath.c_str(), true, nullptr, nullptr, nullptr);
+            char buf[32] = {};
+            if (gidNode) {
+                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.gid));
+                fnKvSetString(gidNode, buf);
+            }
+            if (sizeNode) {
+                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.size));
+                fnKvSetString(sizeNode, buf);
+            }
+            LOG_MANIFEST_INFO("BETA-PIN: app {} depot {} manifests/Pinned gid={} size={}",
+                              appId, depot.depotId, depot.gid, depot.size);
+            any = any || gidNode != nullptr;
         }
         return any;
     }
