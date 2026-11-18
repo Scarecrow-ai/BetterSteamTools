@@ -149,6 +149,79 @@ namespace {
         return result;
     }
 
+
+    // ── branch manifest injection (experimental) ─────────────────────────
+    // The update job counts "missing manifests for beta" before it builds a
+    // depot config, so a branch whose per-depot manifest entries are absent from
+    // the app's in-memory appinfo KV is rejected wholesale. Capture the KV node
+    // the client creates per app id, then materialise the branch's
+    // depots/<depot>/manifests/<branch>/{gid,size} entries with the client's own
+    // KeyValues helpers so its own resolution succeeds.
+    using KvSetInt_t = void(__fastcall*)(void* kv, int value);
+    using KvSetString_t = void(__fastcall*)(void* kv, const char* value);
+    KvSetInt_t fnKvSetInt = nullptr;
+    KvSetString_t fnKvSetString = nullptr;
+    std::mutex g_appKvMutex;
+    std::unordered_map<AppId_t, void*> g_appKv;
+    std::set<std::string> g_injected;
+
+    void RememberAppKv(const char* key, void* kv) {
+        if (!key || !kv) return;
+        AppId_t appId = 0;
+        for (const char* c = key; *c; ++c) {
+            if (*c < '0' || *c > '9') return;      // only plain app-id keys
+            appId = appId * 10 + static_cast<AppId_t>(*c - '0');
+        }
+        if (!appId) return;
+        std::lock_guard<std::mutex> lock(g_appKvMutex);
+        g_appKv[appId] = kv;
+    }
+
+    void* FindAppKv(AppId_t appId) {
+        std::lock_guard<std::mutex> lock(g_appKvMutex);
+        const auto it = g_appKv.find(appId);
+        return it == g_appKv.end() ? nullptr : it->second;
+    }
+
+    bool InjectBranchManifests(AppId_t appId, const std::string& branch,
+                               const std::vector<AppInfoFile::BranchDepot>& depots) {
+        void* appKv = FindAppKv(appId);
+        fnKvSetString = reinterpret_cast<KvSetString_t>(
+            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0290);
+        fnKvSetInt = reinterpret_cast<KvSetInt_t>(
+            reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll")) + 0xDA0250);
+        if (!appKv || !oKvFindFmt || !fnKvSetString) return false;
+
+        const std::string key = std::format("{}|{}", appId, branch);
+        {
+            std::lock_guard<std::mutex> lock(g_appKvMutex);
+            if (!g_injected.insert(key).second) return true;   // already done
+        }
+
+        bool any = false;
+        for (const auto& depot : depots) {
+            if (!depot.depotId) continue;
+            const std::string gidPath = std::format("depots/{}/manifests/{}/gid", depot.depotId, branch);
+            const std::string sizePath = std::format("depots/{}/manifests/{}/size", depot.depotId, branch);
+            void* gidNode = oKvFindFmt(appKv, gidPath.c_str(), true, nullptr, nullptr, nullptr);
+            void* sizeNode = oKvFindFmt(appKv, sizePath.c_str(), true, nullptr, nullptr, nullptr);
+            char buf[32] = {};
+            if (gidNode) {
+                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.gid));
+                fnKvSetString(gidNode, buf);
+                any = true;
+            }
+            if (sizeNode) {
+                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.size));
+                fnKvSetString(sizeNode, buf);
+            }
+            LOG_MANIFEST_INFO("BETA-INJECT app {} depot {} branch \"{}\" gidNode={} sizeNode={}",
+                              appId, depot.depotId, branch,
+                              gidNode ? "ok" : "null", sizeNode ? "ok" : "null");
+        }
+        return any;
+    }
+
     // ── KV lookup trace (debug only) ────────────────────────────────────
     // steamclient reads every branch field through one formatted KeyValues
     // finder: "branches/%s/buildid", "branches/%s/pwdrequired" and the
@@ -189,6 +262,7 @@ namespace {
     void* __fastcall hkKvFindFmt(void* parent, const char* fmt, bool create,
                                  void* out, void* a4, void* a5) {
         void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
+        if (create && result) RememberAppKv(fmt, result);
         bool numeric = fmt && *fmt;
         if (numeric) {
             for (const char* c = fmt; *c; ++c) {
@@ -357,6 +431,14 @@ namespace {
               CUtlVector<DepotEntry>* pSharedDepotInfo, void* pSteamApp,
               uint32* pBuildId, bool* pbBetaFallback)
     {
+        if (TraceBeta(AppId) && AppId != 0) {
+            const std::string branch = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
+            if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
+                AppInfoFile::Refresh(SteamRootDir().string());
+                const auto depots = AppInfoFile::Lookup(AppId, branch);
+                if (!depots.empty()) InjectBranchManifests(AppId, branch, depots);
+            }
+        }
         bool result = oBuildDepotDependency(pUserAppMgr, AppId, pUserConfig,
             pDepotInfo, pSharedDepotInfo, pSteamApp, pBuildId, pbBetaFallback);
 
