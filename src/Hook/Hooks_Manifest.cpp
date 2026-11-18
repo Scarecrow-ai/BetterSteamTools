@@ -168,6 +168,40 @@ namespace {
                                             void* out, void* a4, void* a5);
     KvFindFmt_t oKvFindFmt = nullptr;
 
+    // The client builds the pinned branch's depot manifests itself and writes the
+    // public gid/size into them, overwriting ours. Remember those nodes and answer
+    // the write with the beta's values instead.
+    struct PinnedNodeInfo {
+        AppId_t appId = 0;
+        uint64_t depotId = 0;
+        bool isSize = false;
+    };
+    std::mutex g_pinnedNodesMutex;
+    std::unordered_map<void*, PinnedNodeInfo> g_pinnedNodes;
+
+    bool ParsePinnedManifestPath(const char* fmt, uint64_t& depotId, bool& isSize) {
+        if (!fmt) return false;
+        const std::string path(fmt);
+        const size_t manifestPos = path.find("manifests/Pinned/");
+        if (manifestPos == std::string::npos) return false;
+        if (path.compare(path.size() >= 4 ? path.size() - 4 : 0, 4, "/gid") == 0) {
+            isSize = false;
+        } else if (path.size() >= 5 && path.compare(path.size() - 5, 5, "/size") == 0) {
+            isSize = true;
+        } else {
+            return false;
+        }
+        std::string head = path.substr(0, manifestPos);
+        if (head.rfind("depots/", 0) == 0) head = head.substr(7);
+        while (!head.empty() && head.back() == '/') head.pop_back();
+        if (head.empty()) return false;
+        for (char c : head) {
+            if (c < '0' || c > '9') return false;
+        }
+        depotId = std::strtoull(head.c_str(), nullptr, 10);
+        return depotId != 0;
+    }
+
     std::vector<std::pair<AppId_t, std::string>> PinnedSources();
     std::string PinnedSourceFor(AppId_t appId);
     bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
@@ -257,6 +291,34 @@ namespace {
     std::atomic_int g_kvSetStringCalls{0};
 
     void __fastcall hkKvSetString(void* kv, const char* value) {
+        if (kv) {
+            PinnedNodeInfo info{};
+            bool have = false;
+            {
+                std::lock_guard<std::mutex> lock(g_pinnedNodesMutex);
+                const auto it = g_pinnedNodes.find(kv);
+                if (it != g_pinnedNodes.end()) {
+                    info = it->second;
+                    have = true;
+                }
+            }
+            if (have) {
+                const std::string source = PinnedSourceFor(info.appId);
+                if (!source.empty()) {
+                    AppInfoFile::Refresh(SteamRootDir().string());
+                    for (const auto& depot : AppInfoFile::Lookup(info.appId, source)) {
+                        if (depot.depotId != info.depotId) continue;
+                        char buf[32] = {};
+                        std::snprintf(buf, sizeof(buf), "%llu",
+                                      static_cast<unsigned long long>(info.isSize ? depot.size : depot.gid));
+                        LOG_MANIFEST_INFO("BETA-PIN: app {} depot {} pinned {} answered with {}",
+                                          info.appId, info.depotId, info.isSize ? "size" : "gid", buf);
+                        if (oKvSetString) oKvSetString(kv, buf);
+                        return;
+                    }
+                }
+            }
+        }
         if (value && oKvSetString && g_kvSetStringCalls.load() < 20000) {
             ++g_kvSetStringCalls;
             const bool interesting = std::strcmp(value, "public") == 0 ||
@@ -451,6 +513,7 @@ namespace {
             LOG_MANIFEST_INFO("BETA-GRANT: hooked the beta access check (steamclient+0x4EACE0)");
         }
     }
+
 
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
@@ -943,7 +1006,18 @@ namespace {
             }
         }
         void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
-        if (create && result) RememberAppKv(fmt, result);
+        if (create && result) {
+            RememberAppKv(fmt, result);
+            uint64_t depotId = 0;
+            bool isSize = false;
+            if (Config::GetManifestInjectBranchManifests() && ParsePinnedManifestPath(fmt, depotId, isSize)) {
+                const AppId_t owner = AppIdForKv(parent);
+                if (owner != 0) {
+                    std::lock_guard<std::mutex> lock(g_pinnedNodesMutex);
+                    g_pinnedNodes[result] = PinnedNodeInfo{owner, depotId, isSize};
+                }
+            }
+        }
         if (!create && result && fmt &&
             (std::strcmp(fmt, "betakey") == 0 || std::strcmp(fmt, "BetaKey") == 0)) {
             const AppId_t jobApp = AppIdForJobKv(parent);
