@@ -482,11 +482,9 @@ namespace {
             std::lock_guard<std::mutex> lock(g_appKvMutex);
             g_appKv[appId] = kv;
         }
-        // Let the cache finish populating this node before writing into it.
-        std::thread([appId]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            InjectForKnownApp(appId);
-        }).detach();
+        // Inject immediately: the client resolves the selected branch while it is
+        // still loading this very node, so a delayed injection is always too late.
+        InjectForKnownApp(appId);
     }
 
     void* FindAppKv(AppId_t appId) {
