@@ -155,6 +155,65 @@ namespace {
                                             void* out, void* a4, void* a5);
     KvFindFmt_t oKvFindFmt = nullptr;
 
+
+    // ── update-job betakey override (experimental) ───────────────────────
+    // clientjobupdatedepots decides the beta fallback from the betakey it reads
+    // out of the job's own state KV, and that value is already "public" by then
+    // (the client normalises it at load). Record the job <-> appid association on
+    // entry, then force the appmanifest selection into that KV the moment the job
+    // reads it. This is the Branches::Builder-side injection the other tool does.
+    using JobUpdate_t = __int64(__fastcall*)(void* job);
+    JobUpdate_t oJobUpdate = nullptr;
+    std::mutex g_jobMutex;
+    std::unordered_map<void*, AppId_t> g_jobApp;
+
+    __int64 __fastcall hkJobUpdate(void* job) {
+        AppId_t appId = 0;
+        if (job) {
+            appId = *reinterpret_cast<AppId_t*>(reinterpret_cast<uint8_t*>(job) + 0x18);
+            std::lock_guard<std::mutex> lock(g_jobMutex);
+            g_jobApp[job] = appId;
+        }
+        const __int64 result = oJobUpdate(job);
+        if (job) {
+            std::lock_guard<std::mutex> lock(g_jobMutex);
+            g_jobApp.erase(job);
+        }
+        return result;
+    }
+
+    // App owning the state KV the job is reading (0 when it is not a job KV).
+    AppId_t AppIdForJobKv(void* kv) {
+        std::lock_guard<std::mutex> lock(g_jobMutex);
+        for (const auto& [job, appId] : g_jobApp) {
+            const auto* bytes = static_cast<uint8_t*>(job);
+            if (*reinterpret_cast<void**>(bytes + 0xcb8) == kv) return appId;
+        }
+        return 0;
+    }
+
+    void InstallJobHook() {
+        {
+            const std::filesystem::path flag = SteamRootDir() / "opensteamtool" / "trace-kv.txt";
+            std::error_code ec;
+            if (!std::filesystem::exists(flag, ec)) return;
+        }
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) return;
+        static const uint8_t kPrologue[] = {0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x57,
+                                            0x48, 0x83, 0xEC, 0x50, 0xF6, 0x81, 0xA0, 0x0C, 0x00, 0x00, 0x04};
+        uint8_t* target = module + 0x580400;
+        if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
+            LOG_MANIFEST_WARN("BETA-JOB: prologue mismatch, hook skipped");
+            return;
+        }
+        oJobUpdate = reinterpret_cast<JobUpdate_t>(target);
+        if (OSTPlatform::Detour::Attach(reinterpret_cast<void**>(&oJobUpdate),
+                                        reinterpret_cast<void*>(hkJobUpdate))) {
+            LOG_MANIFEST_INFO("BETA-JOB: hooked clientjobupdatedepots (steamclient+0x580400)");
+        }
+    }
+
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
     // depot config, so a branch whose per-depot manifest entries are absent from
@@ -357,8 +416,17 @@ namespace {
         }
         void* result = oKvFindFmt(parent, fmt, create, out, a4, a5);
         if (create && result) RememberAppKv(fmt, result);
-        if (!create && result && fmt && (std::strcmp(fmt, "betakey") == 0 ||
-                                         std::strcmp(fmt, "BetaKey") == 0)) {
+        if (!create && result && fmt &&
+            (std::strcmp(fmt, "betakey") == 0 || std::strcmp(fmt, "BetaKey") == 0)) {
+            const AppId_t jobApp = AppIdForJobKv(parent);
+            if (jobApp != 0) {
+                const std::string branch = SelectedBranchFromManifest(jobApp);
+                if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
+                    fnKvSetString(result, branch.c_str());
+                    LOG_MANIFEST_INFO("BETA-JOB: app {} betakey forced to \"{}\" before the job reads it",
+                                      jobApp, branch);
+                }
+            }
             auto* node = static_cast<KeyValues*>(result);
             char value[96] = {};
             const bool ok = node->m_iDataType == 1 && SafeCopy(node->m_sValue, value, sizeof(value));
@@ -734,7 +802,8 @@ namespace Hooks_Manifest {
         INSTALL_HOOK_C(BuildDepotDependency);
         INSTALL_HOOK_C(YldLoadDepotManifest);
         INSTALL_HOOK_C(GetAppDataFromAppInfo);
-        InstallKvTrace();          // attaches inside the same transaction
+        InstallKvTrace();
+        InstallJobHook();          // attaches inside the same transaction
         HOOK_END();
     }
 
