@@ -285,6 +285,32 @@ namespace {
             return;
         }
         fnSetBetaBranch = reinterpret_cast<SetBetaBranch_t>(target);
+        // The switch only sticks if the branch is resolvable at that moment: the
+        // client validates the new branch right away and otherwise keeps the one
+        // it already had.
+        bool injected = false;
+        for (int i = 0; i < 40 && !injected; ++i) {
+            if (!FindAppKv(appId)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                continue;
+            }
+            AppInfoFile::Refresh(SteamRootDir().string());
+            const auto depots = AppInfoFile::Lookup(appId, branch);
+            if (depots.empty()) {
+                LOG_MANIFEST_WARN("BETA-SET: app {} branch \"{}\" is not in appinfo, not switching",
+                                  appId, branch);
+                return;
+            }
+            LOG_MANIFEST_INFO("BETA-SET: injecting app {} branch \"{}\" ({}) before the switch",
+                              appId, branch, depots.size());
+            injected = InjectBranchManifests(appId, branch, depots);
+            if (!injected) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        if (!injected) {
+            LOG_MANIFEST_WARN("BETA-SET: app {} could not inject branch \"{}\" — not switching",
+                              appId, branch);
+            return;
+        }
         const bool ok = fnSetBetaBranch(self, appId, branch.c_str());
         LOG_MANIFEST_INFO("BETA-SET: called the client branch setter for app {} -> \"{}\" (ok={})",
                           appId, branch, ok);
