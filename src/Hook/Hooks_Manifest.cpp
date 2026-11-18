@@ -150,6 +150,10 @@ namespace {
     }
 
 
+    using KvFindFmt_t = void* (__fastcall*)(void* parent, const char* fmt, bool create,
+                                            void* out, void* a4, void* a5);
+    KvFindFmt_t oKvFindFmt = nullptr;
+
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
     // depot config, so a branch whose per-depot manifest entries are absent from
@@ -228,9 +232,6 @@ namespace {
     // "manifests/<branch>/..." paths the update job needs. Logging what it asks
     // for (and whether the lookup missed) is the only way to tell how a branch
     // resolution fails without a symbol server.
-    using KvFindFmt_t = void* (__fastcall*)(void* parent, const char* fmt, bool create,
-                                            void* out, void* a4, void* a5);
-    KvFindFmt_t oKvFindFmt = nullptr;
     std::atomic_bool g_kvTraceInstalled{false};
 
     bool KvTraceWanted() {
