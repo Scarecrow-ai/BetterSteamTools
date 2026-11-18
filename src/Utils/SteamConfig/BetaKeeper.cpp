@@ -501,6 +501,20 @@ namespace {
                 }
             }
 
+            // Plain "keep the selection": the manifest lost the key and no other
+            // signal named a branch. Put the last known one back (the grace window
+            // has already given a switch the chance to write its own value).
+            if (wanted.empty() && !userKey && (graceOver || pinned)) {
+                const auto last = g_lastKnown.find(*appId);
+                if (last != g_lastKnown.end() && !last->second.empty()) {
+                    wanted = last->second;
+                    reason = "kept the selected branch";
+                } else if (mountedKey && !mountedKey->empty()) {
+                    wanted = *mountedKey;
+                    reason = "kept the mounted branch";
+                }
+            }
+
             // Standing down after Steam overrode a restore: leave the file alone
             // until the window expires (a pin always wins).
             if (!wanted.empty() && !pinned) {
