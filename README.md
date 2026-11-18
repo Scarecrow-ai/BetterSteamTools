@@ -106,6 +106,20 @@ The `extract_tickets` tool dumps the `AppTicket` and `ETicket` hex strings you n
 
   Known to need it: Bodycam (2406770). If a game works without it, leave it off.
 
+### Test branches (Steam betas)
+
+Picking a beta in *Properties -> Betas* normally does not survive a restart for
+an app the account does not own: Steam keeps the branch key in memory
+(`BetaKey` in the app config KeyValues) but still reports a beta fallback on
+every `BuildDepotDependency` call, then rewrites `appmanifest_<appid>.acf`
+without the betakey and rolls the app back to the public build.
+
+`[manifest] answer_beta_fallback = true` (default) replaces that fallback's
+depot gids and build id with the branch's own values from
+`appcache/appinfo.vdf` and clears the flag. Steam then keeps the selection,
+mounts the branch build, and branch changes made in the Betas dialog take
+effect without a restart. Set it to `false` to leave the fallback to Steam.
+
 ## Future
 - Steam Cloud synchronization support.(This is a huge project)
 

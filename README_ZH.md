@@ -269,3 +269,9 @@ build.bat
 
 ## 免责声明
 本项目仅供研究和教育目的使用。你负责遵守当地法律、平台服务条款和软件许可证。
+
+### 测试分支（Steam betas）
+
+对于当前账号未拥有的应用，在 *属性 -> Betas* 里选择的分支通常无法在重启后保留：Steam 内存里确实有分支键（app 配置 KeyValues 中的 `BetaKey`），但每次 `BuildDepotDependency` 仍然报告 beta fallback，随后重写 `appmanifest_<appid>.acf` 时去掉 betakey，把应用退回公共分支。
+
+`[manifest] answer_beta_fallback = true`（默认开启）会用 `appcache/appinfo.vdf` 中该分支自己的 depot gid 与 buildid 替换 fallback 的结果并清除标志位。此后 Steam 会保留选择、挂载分支构建，在 Betas 对话框里切换分支也会立即生效，无需重启。设为 `false` 则完全交给 Steam 处理。
