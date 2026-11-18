@@ -395,12 +395,17 @@ namespace {
             if (current) {
                 g_lastKnown[*appId] = *current;
                 g_selected[*appId]  = *current;
-                g_missingSince.erase(*appId);
             } else {
                 g_selected.erase(*appId);
-                if (g_missingSince.find(*appId) == g_missingSince.end()) {
-                    g_missingSince[*appId] = now;
-                }
+            }
+
+            // The grace window keys on UserConfig.betakey only: MountedConfig
+            // keeps its own BetaKey while a switch is in flight, so testing the
+            // merged value would keep the window open forever.
+            if (userKey) {
+                g_missingSince.erase(*appId);
+            } else if (g_missingSince.find(*appId) == g_missingSince.end()) {
+                g_missingSince[*appId] = now;
             }
 
             // Inside the grace window a missing key may simply be a switch in
