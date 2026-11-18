@@ -513,6 +513,7 @@ namespace {
     }
 
     std::vector<std::pair<AppId_t, std::string>> PinnedSources();
+    std::string PinnedSourceFor(AppId_t appId);
     bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
 
     void StartBranchSetterThread() {
