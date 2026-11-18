@@ -859,24 +859,28 @@ namespace {
                           appId, sourceBranch, buildId);
 
         bool any = false;
+        // The live KV keeps depot nodes as direct children of the app node
+        // ("<depot>/manifests/<branch>/..."), while the on-disk appinfo nests them
+        // under "depots/". Write both so whichever one the client walks finds the
+        // beta's gid/size.
         for (const auto& depot : depots) {
             if (!depot.depotId) continue;
-            const std::string gidPath = std::format("depots/{}/manifests/Pinned/gid", depot.depotId);
-            const std::string sizePath = std::format("depots/{}/manifests/Pinned/size", depot.depotId);
-            void* gidNode = oKvFindFmt(appKv, gidPath.c_str(), true, nullptr, nullptr, nullptr);
-            void* sizeNode = oKvFindFmt(appKv, sizePath.c_str(), true, nullptr, nullptr, nullptr);
-            char buf[32] = {};
-            if (gidNode) {
-                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.gid));
-                fnKvSetString(gidNode, buf);
-            }
-            if (sizeNode) {
-                std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(depot.size));
-                fnKvSetString(sizeNode, buf);
+            char gidBuf[32] = {};
+            char sizeBuf[32] = {};
+            std::snprintf(gidBuf, sizeof(gidBuf), "%llu", static_cast<unsigned long long>(depot.gid));
+            std::snprintf(sizeBuf, sizeof(sizeBuf), "%llu", static_cast<unsigned long long>(depot.size));
+            for (const char* prefix : {"", "depots/"}) {
+                const std::string base = std::format("{}{}/manifests/Pinned", prefix, depot.depotId);
+                void* gidNode = oKvFindFmt(appKv, (base + "/gid").c_str(), true, nullptr, nullptr, nullptr);
+                void* sizeNode = oKvFindFmt(appKv, (base + "/size").c_str(), true, nullptr, nullptr, nullptr);
+                if (gidNode) {
+                    fnKvSetString(gidNode, gidBuf);
+                    any = true;
+                }
+                if (sizeNode) fnKvSetString(sizeNode, sizeBuf);
             }
             LOG_MANIFEST_INFO("BETA-PIN: app {} depot {} manifests/Pinned gid={} size={}",
                               appId, depot.depotId, depot.gid, depot.size);
-            any = any || gidNode != nullptr;
         }
         return any;
     }
