@@ -259,7 +259,7 @@ namespace {
             if (interesting) {
                 void* frames[14] = {};
                 const USHORT n = RtlCaptureStackBackTrace(2, 14, frames, nullptr);
-                auto* module = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"steamclient64.dll"));
+                const uintptr_t module = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"steamclient64.dll"));
                 std::string stack;
                 for (USHORT i = 0; i < n; ++i) {
                     const auto addr = reinterpret_cast<uintptr_t>(frames[i]);
