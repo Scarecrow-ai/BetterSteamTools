@@ -20,6 +20,8 @@ namespace {
         bool statsEnableApi = true;
         bool updateEnabled = true;
         bool manifestAnswerBetaFallback = true;
+        bool manifestInjectBranchManifests = false;
+        bool manifestSwitchBranchViaClient = false;
         DonateSettings donate;
         std::vector<InjectDll> injectDlls;
         CloudSettings cloud;
@@ -58,6 +60,8 @@ namespace {
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
 manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
+        manifestInjectBranchManifests = snapshot.manifestInjectBranchManifests;
+        manifestSwitchBranchViaClient = snapshot.manifestSwitchBranchViaClient;
         donate                 = snapshot.donate;
         injectDlls             = snapshot.injectDlls;
         cloudEnabled           = snapshot.cloud.enabled;
@@ -116,6 +120,10 @@ manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
                     snapshot.manifestTimeouts.recv = static_cast<uint32_t>(*val);
                 if (auto val = (*manifest)["answer_beta_fallback"].value<bool>())
                     snapshot.manifestAnswerBetaFallback = *val;
+                if (auto val = (*manifest)["inject_branch_manifests"].value<bool>())
+                    snapshot.manifestInjectBranchManifests = *val;
+                if (auto val = (*manifest)["switch_branch_via_client"].value<bool>())
+                    snapshot.manifestSwitchBranchViaClient = *val;
             }
 
             // [log]
@@ -301,6 +309,16 @@ manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
     bool GetManifestAnswerBetaFallback() {
         std::lock_guard lock(g_mutex);
         return manifestAnswerBetaFallback;
+    }
+
+    bool GetManifestInjectBranchManifests() {
+        std::lock_guard lock(g_mutex);
+        return manifestInjectBranchManifests;
+    }
+
+    bool GetManifestSwitchBranchViaClient() {
+        std::lock_guard lock(g_mutex);
+        return manifestSwitchBranchViaClient;
     }
 
     bool GetUpdateEnabled() {

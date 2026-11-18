@@ -276,7 +276,7 @@ namespace {
     }
 
     void StartBranchSetterThread() {
-        if (!TraceBetaList().empty() == false) return;
+        if (!Config::GetManifestSwitchBranchViaClient() && TraceBetaList().empty()) return;
         std::thread([]() {
             for (int i = 0; i < 120 && !g_userAppMgr.load(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -321,7 +321,7 @@ namespace {
     }
 
     void InjectForKnownApp(AppId_t appId) {
-        if (!TraceBeta(appId)) return;
+        if (!Config::GetManifestInjectBranchManifests() && !TraceBeta(appId)) return;
         const std::string branch = SelectedBranchFromManifest(appId);
         if (branch.empty() || _stricmp(branch.c_str(), "public") == 0) return;
         AppInfoFile::Refresh(SteamRootDir().string());
@@ -459,7 +459,8 @@ namespace {
         // the app's appinfo KV; materialise that branch's depot manifests right
         // before it looks them up, which is the one moment early enough for the
         // update job's missing-manifest count.
-        if (fmt && !create && parent && std::strncmp(fmt, "branches/", 9) == 0) {
+        if (fmt && !create && parent && std::strncmp(fmt, "branches/", 9) == 0 &&
+            (Config::GetManifestInjectBranchManifests() || !TraceBetaList().empty())) {
             const AppId_t appId = AppIdForKv(parent);
             if (appId != 0) {
                 const char* start = fmt + 9;
@@ -717,8 +718,12 @@ namespace {
         // that fallback with the branch's own depot table from the appinfo cache
         // and clear the flag, so the client keeps the selection instead of
         // rewriting the manifest without it.
+        // With the appinfo injection active the client resolves the branch on its
+        // own, and rewriting the depot list here would stamp the branch gids as
+        // "installed" (the exact corruption this replaces).
         if (pbBetaFallback && *pbBetaFallback && AppId != 0 &&
-            Config::GetManifestAnswerBetaFallback()) {
+            Config::GetManifestAnswerBetaFallback() &&
+            !Config::GetManifestInjectBranchManifests()) {
             const std::string branch = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
             if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
                 AppInfoFile::Refresh(SteamRootDir().string());
