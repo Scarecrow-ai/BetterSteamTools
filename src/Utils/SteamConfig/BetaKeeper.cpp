@@ -309,6 +309,21 @@ namespace {
         return path.extension() == std::filesystem::path(L".acf");
     }
 
+    std::optional<AppId_t> AppIdFromPath(const std::filesystem::path& path) {
+        const std::wstring name = path.stem().wstring();   // "appmanifest_3450310"
+        if (name.rfind(L"appmanifest_", 0) != 0) return std::nullopt;
+        AppId_t id = 0;
+        bool any = false;
+        for (size_t i = 12; i < name.size(); ++i) {
+            const wchar_t ch = name[i];
+            if (ch < L'0' || ch > L'9') return std::nullopt;
+            id = id * 10 + static_cast<AppId_t>(ch - L'0');
+            any = true;
+        }
+        if (!any || !id) return std::nullopt;
+        return id;
+    }
+
     // ── one manifest ────────────────────────────────────────────────────────
     // Reads `path` when it is new or its mtime moved, records its betakey with
     // the scan state, and repairs it when a branch is owed.
@@ -326,7 +341,19 @@ namespace {
 
         const std::wstring key = path.wstring();
         const auto seen = mtimes.find(key);
-        if (seen != mtimes.end() && seen->second == mtime) return action;  // unchanged
+        if (seen != mtimes.end() && seen->second == mtime) {
+            // The client writes the keyless manifest once and then goes quiet, so
+            // an unchanged file can still owe a repair: re-check it once its grace
+            // window has elapsed, otherwise the timer would never be looked at.
+            bool recheck = false;
+            if (const auto appId = AppIdFromPath(path)) {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (const auto missing = g_missingSince.find(*appId); missing != g_missingSince.end()) {
+                    recheck = (std::chrono::steady_clock::now() - missing->second) >= kRestoreGrace;
+                }
+            }
+            if (!recheck) return action;
+        }
 
         const auto text = ReadSmallFile(path);
         if (!text) return action;
