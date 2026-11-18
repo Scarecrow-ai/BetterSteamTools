@@ -512,6 +512,9 @@ namespace {
         return out;
     }
 
+    std::vector<std::pair<AppId_t, std::string>> PinnedSources();
+    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
+
     void StartBranchSetterThread() {
         if (!Config::GetManifestSwitchBranchViaClient() && TraceBetaList().empty()) return;
         std::thread([]() {
