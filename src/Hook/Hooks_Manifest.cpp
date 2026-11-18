@@ -517,10 +517,10 @@ namespace {
 namespace Hooks_Manifest {
 
     void Install() {
-        InstallKvTrace();
         HOOK_BEGIN();
         INSTALL_HOOK_C(BuildDepotDependency);
         INSTALL_HOOK_C(YldLoadDepotManifest);
+        InstallKvTrace();          // attaches inside the same transaction
         HOOK_END();
     }
 
