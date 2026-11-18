@@ -168,6 +168,11 @@ namespace {
                                             void* out, void* a4, void* a5);
     KvFindFmt_t oKvFindFmt = nullptr;
 
+    std::vector<std::pair<AppId_t, std::string>> PinnedSources();
+    std::string PinnedSourceFor(AppId_t appId);
+    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
+
+
 
     // ── update-job betakey override (experimental) ───────────────────────
     // clientjobupdatedepots decides the beta fallback from the betakey it reads
@@ -398,10 +403,6 @@ namespace {
     void* FindAppKv(AppId_t appId);
     bool InjectBranchManifests(AppId_t appId, const std::string& branch,
                                const std::vector<AppInfoFile::BranchDepot>& depots);
-
-    std::vector<std::pair<AppId_t, std::string>> PinnedSources();
-    std::string PinnedSourceFor(AppId_t appId);
-    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
 
     // ── call the client's own "set beta branch" (experimental) ───────────
     // sub_1384FB840 is what the Betas dialog ends up in: it writes BetaKey into
