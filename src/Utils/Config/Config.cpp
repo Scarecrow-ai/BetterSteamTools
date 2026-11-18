@@ -299,11 +299,11 @@ manifestAnswerBetaFallback = snapshot.manifestAnswerBetaFallback;
     }
 
     bool GetManifestAnswerBetaFallback() {
-    std::shared_lock lock(g_mutex);
-    return manifestAnswerBetaFallback;
-}
+        std::lock_guard lock(g_mutex);
+        return manifestAnswerBetaFallback;
+    }
 
-bool GetUpdateEnabled() {
+    bool GetUpdateEnabled() {
         std::lock_guard lock(g_mutex);
         return updateEnabled;
     }
