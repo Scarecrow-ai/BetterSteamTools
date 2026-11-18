@@ -220,7 +220,11 @@ namespace {
     }
 
     void InstallJobHook() {
-        if (!KvTraceWanted() && !Config::GetManifestInjectBranchManifests()) return;
+        {
+            const std::filesystem::path flag = SteamRootDir() / "opensteamtool" / "trace-kv.txt";
+            std::error_code ec;
+            if (!std::filesystem::exists(flag, ec) && !Config::GetManifestInjectBranchManifests()) return;
+        }
         auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
         if (!module) return;
         static const uint8_t kPrologue[] = {0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x57,
