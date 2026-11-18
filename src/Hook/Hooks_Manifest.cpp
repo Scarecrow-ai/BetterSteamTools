@@ -3,6 +3,9 @@
 #include "dllmain.h"
 #include "OSTPlatform/include/Thread.h"
 #include "Utils/SteamMetadata/ManifestCache.h"
+#include "OSTPlatform/include/DynamicLibrary.h"
+#include <filesystem>
+#include <fstream>
 #include "OSTPlatform/include/Dialog.h"
 #include <atomic>
 #include <chrono>
@@ -20,6 +23,90 @@
 //      in the output vector (replaces the old KV-tree approach).
 // ═══════════════════════════════════════════════════════════════════
 namespace {
+
+    // ── debug: what the client hands to BuildDepotDependency ────────────
+    // Enabled per app by listing ids in <Steam>/opensteamtool/trace-beta.txt
+    // (one per line). Absent file = no effect at all.
+    std::filesystem::path SteamRootDir() {
+        wchar_t buf[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, buf, MAX_PATH);
+        return std::filesystem::path(buf).parent_path();
+    }
+
+    bool TraceBeta(AppId_t appId) {
+        const std::filesystem::path file = SteamRootDir() / "opensteamtool" / "trace-beta.txt";
+        std::ifstream in(file);
+        if (!in) return false;
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            try {
+                if (static_cast<AppId_t>(std::stoul(line)) == appId) return true;
+            } catch (...) {
+            }
+        }
+        return false;
+    }
+
+    IKeyValuesSystem* TraceKvSystem() {
+        static IKeyValuesSystem* sys = []() -> IKeyValuesSystem* {
+            auto vstdlib = OSTPlatform::DynamicLibrary::GetLoaded("vstdlib_s64.dll");
+            if (!vstdlib) return nullptr;
+            auto pfn = reinterpret_cast<KeyValuesSystemSteam_t>(
+                OSTPlatform::DynamicLibrary::GetSymbol(vstdlib, "KeyValuesSystemSteam"));
+            return pfn ? pfn() : nullptr;
+        }();
+        return sys;
+    }
+
+    // KeyValues strings may be interned symbols, so never trust the pointer.
+    bool SafeCopy(const char* p, char* dst, size_t cap) {
+        __try {
+            if (!p) return false;
+            size_t i = 0;
+            for (; i + 1 < cap && p[i]; ++i) dst[i] = p[i];
+            dst[i] = 0;
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void DumpKv(KeyValues* kv, int depth) {
+        auto* sys = TraceKvSystem();
+        if (!sys || !kv) return;
+        const std::string pad(static_cast<size_t>(depth) * 2, ' ');
+        for (KeyValues* child = kv->m_pSub; child; child = child->m_pPeer) {
+            const char* rawName = sys->GetStringForSymbol(child->m_iKeyName);
+            char name[128] = {};
+            SafeCopy(rawName, name, sizeof(name));
+            switch (child->m_iDataType) {
+                case 0:
+                    LOG_MANIFEST_INFO("BETA-KV {}{} {{", pad, name);
+                    if (depth < 3) DumpKv(child, depth + 1);
+                    break;
+                case 1: {
+                    char value[160] = {};
+                    if (SafeCopy(child->m_sValue, value, sizeof(value)))
+                        LOG_MANIFEST_INFO("BETA-KV {}{} = \"{}\"", pad, name, value);
+                    else
+                        LOG_MANIFEST_INFO("BETA-KV {}{} = <string ptr 0x{:X}>", pad, name,
+                                          reinterpret_cast<uintptr_t>(child->m_sValue));
+                    break;
+                }
+                case 2:
+                    LOG_MANIFEST_INFO("BETA-KV {}{} = {}", pad, name, child->m_iValue);
+                    break;
+                case 7:
+                    LOG_MANIFEST_INFO("BETA-KV {}{} = {}", pad, name, child->m_ullValue);
+                    break;
+                default:
+                    LOG_MANIFEST_INFO("BETA-KV {}{} (type {})", pad, name, child->m_iDataType);
+                    break;
+            }
+        }
+    }
 
     // Per-fetch timeout for the on-demand pre-seed in YldLoadDepotManifest. Most
     // manifests are Cloudflare edge hits (~100-300 ms); this cap keeps one slow or
@@ -120,6 +207,15 @@ namespace {
         LOG_MANIFEST_TRACE("BuildDepotDependency: AppId={} pUserConfig=0x{:X} result={} pSteamApp=0x{:X} pBuildId={} pbBetaFallback={}",
             AppId, (uintptr_t)pUserConfig, result, (uintptr_t)pSteamApp,
             pBuildId ? *pBuildId : 0, pbBetaFallback ? *pbBetaFallback : false);
+
+        if (TraceBeta(AppId)) {
+            LOG_MANIFEST_INFO("BETA-TRACE app {} result={} build={} fallback={} depots={} shared={}",
+                AppId, result, pBuildId ? *pBuildId : 0,
+                pbBetaFallback ? *pbBetaFallback : false,
+                pDepotInfo ? pDepotInfo->m_Size : 0,
+                pSharedDepotInfo ? pSharedDepotInfo->m_Size : 0);
+            DumpKv(reinterpret_cast<KeyValues*>(pUserConfig), 0);
+        }
         if (pDepotInfo) {
             LOG_MANIFEST_TRACE("pDepotInfo->nCount={}", pDepotInfo->m_Size);
             for (uint32 i = 0; i < pDepotInfo->m_Size; ++i) {
