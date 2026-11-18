@@ -186,7 +186,7 @@ namespace {
     AppId_t AppIdForJobKv(void* kv) {
         std::lock_guard<std::mutex> lock(g_jobMutex);
         for (const auto& [job, appId] : g_jobApp) {
-            const auto* bytes = static_cast<uint8_t*>(job);
+            auto* bytes = static_cast<uint8_t*>(job);
             if (*reinterpret_cast<void**>(bytes + 0xcb8) == kv) return appId;
         }
         return 0;
