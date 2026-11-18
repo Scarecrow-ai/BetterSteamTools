@@ -38,6 +38,18 @@ namespace {
         return std::filesystem::path(buf).parent_path();
     }
 
+    std::vector<AppId_t> TraceBetaList() {
+        std::vector<AppId_t> out;
+        std::ifstream in(SteamRootDir() / "opensteamtool" / "trace-beta.txt");
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            try { out.push_back(static_cast<AppId_t>(std::stoul(line))); } catch (...) {}
+        }
+        return out;
+    }
+
     bool TraceBeta(AppId_t appId) {
         const std::filesystem::path file = SteamRootDir() / "opensteamtool" / "trace-beta.txt";
         std::ifstream in(file);
@@ -229,6 +241,53 @@ namespace {
     std::unordered_map<AppId_t, void*> g_appKv;
     std::set<std::string> g_injected;
 
+
+
+    // ── call the client's own "set beta branch" (experimental) ───────────
+    // sub_1384FB840 is what the Betas dialog ends up in: it writes BetaKey into
+    // the app's user config KV, logs "AppID %u beta changed: %s" and lets the
+    // normal scheduler/update path run. Editing the appmanifest only gets part
+    // way there (no user-config-changed event, so nothing is ever queued);
+    // calling this gives exactly the behaviour of a UI switch.
+    using SetBetaBranch_t = bool(__fastcall*)(void* self, AppId_t appId, const char* branch);
+    SetBetaBranch_t fnSetBetaBranch = nullptr;
+    std::atomic<void*> g_userAppMgr{nullptr};
+    std::atomic_bool g_branchCallStarted{false};
+
+    void TryCallSetBetaBranch(AppId_t appId, const std::string& branch) {
+        void* self = g_userAppMgr.load();
+        if (!self || branch.empty() || _stricmp(branch.c_str(), "public") == 0) return;
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) return;
+        static const uint8_t kPrologue[] = {0x48, 0x89, 0x74, 0x24, 0x10, 0x48, 0x89, 0x7C,
+                                            0x24, 0x18, 0x41, 0x56, 0x48, 0x81, 0xEC, 0xA0,
+                                            0x00, 0x00, 0x00};
+        uint8_t* target = module + 0x4FB840;
+        if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
+            LOG_MANIFEST_WARN("BETA-SET: prologue mismatch, not calling the branch setter");
+            return;
+        }
+        fnSetBetaBranch = reinterpret_cast<SetBetaBranch_t>(target);
+        const bool ok = fnSetBetaBranch(self, appId, branch.c_str());
+        LOG_MANIFEST_INFO("BETA-SET: called the client branch setter for app {} -> \"{}\" (ok={})",
+                          appId, branch, ok);
+    }
+
+    void StartBranchSetterThread() {
+        if (!TraceBetaList().empty() == false) return;
+        std::thread([]() {
+            for (int i = 0; i < 120 && !g_userAppMgr.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            if (!g_userAppMgr.load()) {
+                LOG_MANIFEST_WARN("BETA-SET: never captured the app manager, skipping");
+                return;
+            }
+            for (AppId_t appId : TraceBetaList()) {
+                const std::string branch = SelectedBranchFromManifest(appId);
+                if (!branch.empty()) TryCallSetBetaBranch(appId, branch);
+            }
+        }).detach();
+    }
 
     bool InjectBranchManifests(AppId_t appId, const std::string& branch,
                                const std::vector<AppInfoFile::BranchDepot>& depots);
@@ -604,6 +663,14 @@ namespace {
               CUtlVector<DepotEntry>* pSharedDepotInfo, void* pSteamApp,
               uint32* pBuildId, bool* pbBetaFallback)
     {
+        if (AppId != 0 && !g_userAppMgr.load()) {
+            g_userAppMgr.store(pUserAppMgr);
+            std::thread([]() {
+                for (int i = 0; i < 40 && !g_branchCallStarted.exchange(true); ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                StartBranchSetterThread();
+            }).detach();
+        }
         if (TraceBeta(AppId) && AppId != 0) {
             const std::string branch = BranchFromUserConfig(reinterpret_cast<KeyValues*>(pUserConfig));
             if (!branch.empty() && _stricmp(branch.c_str(), "public") != 0) {
