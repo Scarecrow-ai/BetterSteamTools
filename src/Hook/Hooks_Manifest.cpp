@@ -393,6 +393,10 @@ namespace {
     bool InjectBranchManifests(AppId_t appId, const std::string& branch,
                                const std::vector<AppInfoFile::BranchDepot>& depots);
 
+    std::vector<std::pair<AppId_t, std::string>> PinnedSources();
+    std::string PinnedSourceFor(AppId_t appId);
+    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
+
     // ── call the client's own "set beta branch" (experimental) ───────────
     // sub_1384FB840 is what the Betas dialog ends up in: it writes BetaKey into
     // the app's user config KV, logs "AppID %u beta changed: %s" and lets the
@@ -531,10 +535,6 @@ namespace {
         }
         return out;
     }
-
-    std::vector<std::pair<AppId_t, std::string>> PinnedSources();
-    std::string PinnedSourceFor(AppId_t appId);
-    bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch);
 
     void StartBranchSetterThread() {
         if (!Config::GetManifestSwitchBranchViaClient() && TraceBetaList().empty()) return;
