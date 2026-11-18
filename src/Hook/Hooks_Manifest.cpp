@@ -241,6 +241,58 @@ namespace {
         }
     }
 
+
+    // ── who writes "public" into the app state (debug only) ──────────────
+    // The branch selection is normalised to public before the update job runs and
+    // before the appinfo KeyValues exists. Log the stack of every KeyValues string
+    // write of interest during startup so the deciding function can be identified.
+    using KvSetString_t = void(__fastcall*)(void* kv, const char* value);
+    KvSetString_t oKvSetString = nullptr;
+    std::atomic_int g_kvSetStringCalls{0};
+
+    void __fastcall hkKvSetString(void* kv, const char* value) {
+        if (value && oKvSetString && g_kvSetStringCalls.load() < 20000) {
+            ++g_kvSetStringCalls;
+            const bool interesting = std::strcmp(value, "public") == 0 ||
+                std::strcmp(value, "26655995") == 0 || std::strcmp(value, "26105915") == 0 ||
+                std::strstr(value, "prev_open_beta") != nullptr;
+            if (interesting) {
+                void* frames[14] = {};
+                const USHORT n = RtlCaptureStackBackTrace(2, 14, frames, nullptr);
+                auto* module = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"steamclient64.dll"));
+                std::string stack;
+                for (USHORT i = 0; i < n; ++i) {
+                    const auto addr = reinterpret_cast<uintptr_t>(frames[i]);
+                    const bool inside = addr > module && addr < module + 0x2000000;
+                    stack += inside ? std::format(" +0x{:X}", addr - module)
+                                    : std::format(" 0x{:X}", addr);
+                }
+                LOG_MANIFEST_INFO("KV-SETSTR value=\"{}\" stack:{}", value, stack);
+            }
+        }
+        oKvSetString(kv, value);
+    }
+
+    void InstallKvSetTrace() {
+        {
+            const std::filesystem::path flag = SteamRootDir() / "opensteamtool" / "trace-kv.txt";
+            std::error_code ec;
+            if (!std::filesystem::exists(flag, ec)) return;
+        }
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) return;
+        uint8_t* target = module + 0xDA0290;
+        if (target[0] != 0x48 || target[1] != 0x85 || target[2] != 0xC9 || target[3] != 0x74) {
+            LOG_MANIFEST_WARN("KV-SETSTR: prologue mismatch at +0xDA0290");
+            return;
+        }
+        oKvSetString = reinterpret_cast<KvSetString_t>(target);
+        if (OSTPlatform::Detour::Attach(reinterpret_cast<void**>(&oKvSetString),
+                                        reinterpret_cast<void*>(hkKvSetString))) {
+            LOG_MANIFEST_INFO("KV-SETSTR: hooked steamclient+0xDA0290");
+        }
+    }
+
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
     // depot config, so a branch whose per-depot manifest entries are absent from
@@ -991,6 +1043,7 @@ namespace Hooks_Manifest {
         INSTALL_HOOK_C(GetAppDataFromAppInfo);
         InstallKvTrace();
         InstallJobHook();          // attaches inside the same transaction
+        InstallKvSetTrace();
         HOOK_END();
     }
 
