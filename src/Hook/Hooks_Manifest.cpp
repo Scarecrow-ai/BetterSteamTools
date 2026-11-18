@@ -243,6 +243,8 @@ namespace {
 
 
 
+    std::string SelectedBranchFromManifest(AppId_t appId);
+
     // ── call the client's own "set beta branch" (experimental) ───────────
     // sub_1384FB840 is what the Betas dialog ends up in: it writes BetaKey into
     // the app's user config KV, logs "AppID %u beta changed: %s" and lets the
