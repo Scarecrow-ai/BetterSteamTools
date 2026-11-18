@@ -515,6 +515,59 @@ namespace {
     }
 
 
+
+    // 0xDA0340 is KeyValues::SetUint64; the client writes the pinned branch's
+    // depot gid/size through it, so the string hook never saw those values.
+    using KvSetUint64_t = void(__fastcall*)(void* kv, uint64_t value);
+    KvSetUint64_t oKvSetUint64 = nullptr;
+
+    void __fastcall hkKvSetUint64(void* kv, uint64_t value) {
+        if (kv) {
+            PinnedNodeInfo info{};
+            bool have = false;
+            {
+                std::lock_guard<std::mutex> lock(g_pinnedNodesMutex);
+                const auto it = g_pinnedNodes.find(kv);
+                if (it != g_pinnedNodes.end()) {
+                    info = it->second;
+                    have = true;
+                }
+            }
+            if (have) {
+                const std::string source = PinnedSourceFor(info.appId);
+                if (!source.empty()) {
+                    AppInfoFile::Refresh(SteamRootDir().string());
+                    for (const auto& depot : AppInfoFile::Lookup(info.appId, source)) {
+                        if (depot.depotId != info.depotId) continue;
+                        const uint64_t pinned = info.isSize ? depot.size : depot.gid;
+                        LOG_MANIFEST_INFO("BETA-PIN: app {} depot {} pinned {} written as {} (was {})",
+                                          info.appId, info.depotId, info.isSize ? "size" : "gid",
+                                          pinned, value);
+                        if (oKvSetUint64) oKvSetUint64(kv, pinned);
+                        return;
+                    }
+                }
+            }
+        }
+        if (oKvSetUint64) oKvSetUint64(kv, value);
+    }
+
+    void InstallKvSetUint64Hook() {
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) return;
+        uint8_t* target = module + 0xDA0340;
+        static const uint8_t kPrologue[] = {0x48, 0x85, 0xC9, 0x74};
+        if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
+            LOG_MANIFEST_WARN("BETA-PIN: prologue mismatch at +0xDA0340");
+            return;
+        }
+        oKvSetUint64 = reinterpret_cast<KvSetUint64_t>(target);
+        if (OSTPlatform::Detour::Attach(reinterpret_cast<void**>(&oKvSetUint64),
+                                        reinterpret_cast<void*>(hkKvSetUint64))) {
+            LOG_MANIFEST_INFO("BETA-PIN: hooked KeyValues::SetUint64 (steamclient+0xDA0340)");
+        }
+    }
+
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
     // depot config, so a branch whose per-depot manifest entries are absent from
@@ -1427,6 +1480,7 @@ namespace Hooks_Manifest {
         InstallKvTrace();
         InstallJobHook();          // attaches inside the same transaction
         InstallKvSetTrace();
+        InstallKvSetUint64Hook();
         InstallBetaAccessGrant();
         InstallBetaHashReadGrant();
         InstallBetaTokenGrant();
