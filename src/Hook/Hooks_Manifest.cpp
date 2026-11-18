@@ -347,15 +347,12 @@ namespace {
     BetaHashRead_t oBetaHashRead = nullptr;
 
     bool __fastcall hkBetaHashRead(void* store, AppId_t appId, const char* branch) {
-        const bool cached = oBetaHashRead ? oBetaHashRead(store, appId, branch) : false;
-        if (cached) return true;
-        if (!branch || !*branch) return false;
-        if (!Config::GetManifestInjectBranchManifests() && TraceBetaList().empty()) return false;
-        if (_stricmp(branch, "Pinned") == 0 && !PinnedSourceFor(appId).empty()) {
-            LOG_MANIFEST_INFO("BETA-GRANT: app {} cached-password check for \"Pinned\" granted", appId);
+        if (branch && *branch &&
+            (Config::GetManifestInjectBranchManifests() || TraceBeta(appId)) &&
+            _stricmp(branch, "Pinned") == 0 && !PinnedSourceFor(appId).empty()) {
             return true;
         }
-        return false;
+        return oBetaHashRead ? oBetaHashRead(store, appId, branch) : false;
     }
 
     void InstallBetaHashReadGrant() {
@@ -383,20 +380,16 @@ namespace {
     BetaToken_t oBetaToken = nullptr;
 
     int __fastcall hkBetaToken(void* self, AppId_t appId, const char* branch) {
-        const int status = oBetaToken ? oBetaToken(self, appId, branch) : 0;
-        if (TraceBeta(appId)) {
-            LOG_MANIFEST_INFO("BETA-TOKEN: app {} branch \"{}\" status={}", appId,
-                              branch ? branch : "(null)", status);
-        }
-        if (status == 0) return status;
-        if (!branch || !*branch) return status;
-        if (!Config::GetManifestInjectBranchManifests() && TraceBetaList().empty()) return status;
-        if (_stricmp(branch, "Pinned") == 0 && !PinnedSourceFor(appId).empty()) {
-            LOG_MANIFEST_INFO("BETA-GRANT: app {} beta token for \"Pinned\" forced valid (was {})",
-                              appId, status);
+        // Short circuit before the original runs: it logs the invalid-password
+        // warning and rewrites the betakey back to public itself, so patching the
+        // return value afterwards is too late.
+        if (branch && *branch &&
+            (Config::GetManifestInjectBranchManifests() || TraceBeta(appId)) &&
+            _stricmp(branch, "Pinned") == 0 && !PinnedSourceFor(appId).empty()) {
+            LOG_MANIFEST_INFO("BETA-GRANT: app {} beta token for \"Pinned\" short-circuited to valid", appId);
             return 0;
         }
-        return status;
+        return oBetaToken ? oBetaToken(self, appId, branch) : 0;
     }
 
     void InstallBetaTokenGrant() {
