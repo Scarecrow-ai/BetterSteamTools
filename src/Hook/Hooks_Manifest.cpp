@@ -220,11 +220,7 @@ namespace {
     }
 
     void InstallJobHook() {
-        {
-            const std::filesystem::path flag = SteamRootDir() / "opensteamtool" / "trace-kv.txt";
-            std::error_code ec;
-            if (!std::filesystem::exists(flag, ec)) return;
-        }
+        if (!KvTraceWanted() && !Config::GetManifestInjectBranchManifests()) return;
         auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
         if (!module) return;
         static const uint8_t kPrologue[] = {0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x57,
@@ -636,7 +632,7 @@ namespace {
     }
 
     void InstallKvTrace() {
-        if (!KvTraceWanted()) return;
+        if (!KvTraceWanted() && !Config::GetManifestInjectBranchManifests()) return;
         auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
         if (!module) {
             LOG_MANIFEST_WARN("KVFIND: steamclient64.dll not loaded");
