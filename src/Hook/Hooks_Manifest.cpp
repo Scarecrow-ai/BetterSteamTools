@@ -348,6 +348,12 @@ namespace {
         if (granted) return true;
         if (!branch || !*branch || _stricmp(branch, "public") == 0) return false;
         if (!Config::GetManifestInjectBranchManifests() && TraceBetaList().empty()) return false;
+        // our synthetic branch: the client has no betahash for it unless it was
+        // written, and the reference tool grants it outright the same way.
+        if (_stricmp(branch, "Pinned") == 0 && !PinnedSourceFor(appId).empty()) {
+            LOG_MANIFEST_INFO("BETA-GRANT: app {} branch \"Pinned\" granted", appId);
+            return true;
+        }
         const std::string selected = SelectedBranchFromManifest(appId);
         if (selected.empty() || _stricmp(selected.c_str(), branch) != 0) return false;
         LOG_MANIFEST_INFO("BETA-GRANT app {} branch \"{}\" granted (client denied it)", appId, branch);
@@ -747,6 +753,10 @@ namespace {
     bool InjectPinnedBranch(AppId_t appId, const std::string& sourceBranch) {
         void* appKv = FindAppKv(appId);
         if (!appKv || !oKvFindFmt) return false;
+        {
+            std::lock_guard<std::mutex> lock(g_appKvMutex);
+            if (!g_injected.insert(std::format("{}|Pinned", appId)).second) return true;
+        }
         AppInfoFile::Refresh(SteamRootDir().string());
         const auto depots = AppInfoFile::Lookup(appId, sourceBranch);
         const auto buildId = AppInfoFile::LookupBuildId(appId, sourceBranch);
