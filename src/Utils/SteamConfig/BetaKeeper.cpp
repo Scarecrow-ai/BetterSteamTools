@@ -387,14 +387,14 @@ namespace {
             // If the manifest now carries a branch we did not write, Steam (or the
             // user, through the Betas dialog) chose it. Do not put our value back:
             // stand down for a while so a switch is never cancelled.
-            if (current) {
+            if (userKey) {
                 const auto restored = g_restoredValue.find(*appId);
-                if (restored != g_restoredValue.end() && *current != restored->second) {
+                if (restored != g_restoredValue.end() && *userKey != restored->second) {
                     const auto at = g_restoreAt.find(*appId);
                     if (at != g_restoreAt.end() && now - at->second < kStandDownWindow) {
                         g_standDownUntil[*appId] = now + kStandDown;
                         LOG_BETA_INFO("app {}: Steam set branch \"{}\" (we had restored \"{}\") — "
-                                      "standing down", *appId, *current, restored->second);
+                                      "standing down", *appId, *userKey, restored->second);
                     }
                     g_restoredValue.erase(restored);
                     g_restoreAt.erase(*appId);
@@ -424,9 +424,9 @@ namespace {
                 installedSlot.push_back({depot.depotId, depot.gid, depot.size});
             }
 
-            if (current) {
-                g_lastKnown[*appId] = *current;
-                g_selected[*appId]  = *current;
+            if (userKey) {
+                g_lastKnown[*appId] = *userKey;
+                g_selected[*appId]  = *userKey;
             } else {
                 g_selected.erase(*appId);
             }
