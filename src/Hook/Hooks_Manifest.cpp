@@ -293,6 +293,44 @@ namespace {
         }
     }
 
+
+    // ── beta access grant (HubcapTools "Branches::BetaAccessCheck") ──────
+    // steamclient+0x4EACE0 decides whether an app may use a beta branch by
+    // reading Software\Valve\Steam\<root>\Apps\<appid>\betahash_<branch>.
+    // An app the account does not own has no such value, so the check fails and
+    // the client falls back to public. The reference tool hooks exactly this
+    // check and grants its synthetic branch; do the same for the branch the
+    // appmanifest selects.
+    using BetaAccessCheck_t = bool(__fastcall*)(void* self, AppId_t appId, const char* branch);
+    BetaAccessCheck_t oBetaAccessCheck = nullptr;
+
+    bool __fastcall hkBetaAccessCheck(void* self, AppId_t appId, const char* branch) {
+        const bool granted = oBetaAccessCheck ? oBetaAccessCheck(self, appId, branch) : false;
+        if (granted) return true;
+        if (!branch || !*branch || _stricmp(branch, "public") == 0) return false;
+        if (!Config::GetManifestInjectBranchManifests() && TraceBetaList().empty()) return false;
+        const std::string selected = SelectedBranchFromManifest(appId);
+        if (selected.empty() || _stricmp(selected.c_str(), branch) != 0) return false;
+        LOG_MANIFEST_INFO("BETA-GRANT app {} branch \"{}\" granted (client denied it)", appId, branch);
+        return true;
+    }
+
+    void InstallBetaAccessGrant() {
+        auto* module = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"steamclient64.dll"));
+        if (!module) return;
+        uint8_t* target = module + 0x4EACE0;
+        static const uint8_t kPrologue[] = {0x48, 0x81, 0xEC, 0xC8, 0x01, 0x00, 0x00};
+        if (std::memcmp(target, kPrologue, sizeof(kPrologue)) != 0) {
+            LOG_MANIFEST_WARN("BETA-GRANT: prologue mismatch at +0x4EACE0");
+            return;
+        }
+        oBetaAccessCheck = reinterpret_cast<BetaAccessCheck_t>(target);
+        if (OSTPlatform::Detour::Attach(reinterpret_cast<void**>(&oBetaAccessCheck),
+                                        reinterpret_cast<void*>(hkBetaAccessCheck))) {
+            LOG_MANIFEST_INFO("BETA-GRANT: hooked the beta access check (steamclient+0x4EACE0)");
+        }
+    }
+
     // ── branch manifest injection (experimental) ─────────────────────────
     // The update job counts "missing manifests for beta" before it builds a
     // depot config, so a branch whose per-depot manifest entries are absent from
@@ -1044,6 +1082,7 @@ namespace Hooks_Manifest {
         InstallKvTrace();
         InstallJobHook();          // attaches inside the same transaction
         InstallKvSetTrace();
+        InstallBetaAccessGrant();
         HOOK_END();
     }
 
